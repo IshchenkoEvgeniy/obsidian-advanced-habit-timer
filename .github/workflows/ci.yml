@@ -23,6 +23,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Root tests import cloudflare-companion/src, which uses its own dependencies.
+      - name: Install cloudflare-companion dependencies
+        working-directory: cloudflare-companion
+        run: npm ci
+
       # 519 existing lint errors; step is non-blocking until the debt is cleaned up.
       - name: Lint (non-blocking until existing lint debt is fixed)
         run: npm run lint
