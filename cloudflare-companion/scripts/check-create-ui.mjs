@@ -1,0 +1,51 @@
+import { createRequire } from 'node:module';
+import { mkdir } from 'node:fs/promises';
+const require = createRequire(import.meta.url);
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const browser = await chromium.launch({ headless: true });
+const errors = [];
+await mkdir('artifacts', { recursive: true });
+try {
+  for (const width of [360, 900]) {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    page.setDefaultTimeout(7000);
+    page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
+    await page.route('https://**', route => route.abort());
+    const submissions = [];
+    await page.route('**/app/api/capture', async route => { submissions.push(route.request().postDataJSON()); await route.fulfill({ json: { ok: true } }); });
+    await page.route('**/app/api/media-create', async route => { submissions.push(route.request().postDataJSON()); await route.fulfill({ json: { ok: true } }); });
+    await page.goto('http://127.0.0.1:8791/app');
+    await page.getByRole('button', { name: 'Добавить', exact: true }).click();
+    await page.getByRole('button', { name: 'Быстрый захват', exact: true }).click();
+    await page.locator('select[name="category"]').selectOption('link');
+    await page.getByLabel('Текст', { exact: true }).fill('Интересная статья');
+    await page.getByLabel('Ссылка', { exact: true }).fill('https://example.com/article');
+    await page.screenshot({ path: `artifacts/capture-${width}.png` });
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await page.getByRole('heading', { name: 'Запись в дневную заметку' }).waitFor();
+    await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await page.getByRole('button', { name: 'Библиотека', exact: true }).click();
+    await page.getByRole('button', { name: 'Добавить произведение', exact: true }).click();
+    await page.getByLabel('Название', { exact: true }).fill('Длинное название новой книги для проверки мобильной формы');
+    await page.getByLabel('Авторы', { exact: true }).fill('Оли');
+    await page.getByRole('button', { name: 'Оливер Беркман', exact: true }).click();
+    await page.getByLabel('Авторы', { exact: true }).press('End');
+    await page.getByLabel('Авторы', { exact: true }).pressSequentially('Джеймс Клир');
+    await page.getByLabel('Жанры', { exact: true }).fill('Роман, Саморазвитие');
+    await page.getByLabel('Общий объём', { exact: true }).fill('300');
+    await page.locator('summary').click();
+    await page.getByLabel('Формат', { exact: true }).fill('Audiobook');
+    await page.getByLabel('Формат', { exact: true }).press('Tab');
+    if (await page.locator('select[name="unit"]').inputValue() !== 'minutes') throw new Error('Audio unit not updated');
+    await page.getByLabel('Серия', { exact: true }).fill('Война роз');
+    await page.screenshot({ path: `artifacts/media-create-${width}.png` });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.querySelector('.modal').scrollWidth > document.querySelector('.modal').clientWidth);
+    if (overflow) throw new Error(`Overflow at ${width}`);
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await page.getByRole('heading', { name: 'Произведение добавлено в очередь' }).waitFor();
+    if (submissions.length !== 2 || submissions[0].category !== 'link' || submissions[1].unit !== 'minutes') throw new Error('Unexpected submission');
+    await page.close();
+  }
+  if (errors.length) throw new Error(errors.join('\n'));
+  console.log('Capture and media forms passed at 360px and 900px; no browser errors or horizontal overflow.');
+} finally { await browser.close(); }

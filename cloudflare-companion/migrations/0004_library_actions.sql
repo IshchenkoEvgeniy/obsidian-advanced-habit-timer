@@ -1,0 +1,3 @@
+ALTER TABLE active_timers ADD COLUMN media_id INTEGER;
+ALTER TABLE library_items ADD COLUMN season REAL NOT NULL DEFAULT 0;
+ALTER TABLE library_items ADD COLUMN episode REAL NOT NULL DEFAULT 0;

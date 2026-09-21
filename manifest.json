@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-advanced-habit-timer",
+	"name": "Advanced Habit Timer & Stats",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Track time with Stopwatch/Pomodoro, visualize progress with annual heatmaps, streaks, and donut charts.",
+	"author": "IshchenkoEvgeniy",
+	"authorUrl": "https://github.com/IshchenkoEvgeniy",
+	"isDesktopOnly": false
+}

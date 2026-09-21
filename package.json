@@ -1,0 +1,43 @@
+{
+	"name": "obsidian-habit-timer",
+	"version": "1.0.0",
+	"description": "Habit tracker and focus timer plugin for Obsidian with project management, library tracking and Telegram integration.",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"lint": "eslint .",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"keywords": [
+		"obsidian",
+		"habit",
+		"timer",
+		"focus",
+		"productivity",
+		"pomodoro"
+	],
+	"license": "0-BSD",
+	"devDependencies": {
+		"@eslint/js": "9.30.1",
+		"@eslint/json": "^0.14.0",
+		"@types/node": "^16.11.6",
+		"esbuild": "0.25.5",
+		"esbuild-svelte": "^0.9.5",
+		"eslint-plugin-obsidianmd": "0.1.9",
+		"globals": "14.0.0",
+		"jiti": "2.6.1",
+		"svelte": "^5.56.4",
+		"svelte-preprocess": "^6.0.5",
+		"tslib": "2.4.0",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "8.35.1",
+		"vitest": "^4.1.10"
+	},
+	"dependencies": {
+		"obsidian": "^1.7.2"
+	}
+}

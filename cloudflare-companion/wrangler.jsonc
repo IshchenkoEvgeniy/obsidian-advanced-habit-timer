@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "habit-timer-companion",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "habit-timer-companion",
+      "database_id": "3705a5d6-07c8-44c3-a75c-e61a464a5439",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "vars": {
+    "PROFILE_ID": "default"
+  },
+  "r2_buckets": [
+    {
+      "binding": "COVERS",
+      "bucket_name": "habit-timer-covers"
+    }
+  ]
+}

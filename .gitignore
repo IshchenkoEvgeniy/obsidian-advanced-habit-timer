@@ -1,0 +1,39 @@
+# vscode
+.vscode 
+
+# Intellij
+*.iml
+.idea
+
+# npm
+node_modules
+
+# Don't include the compiled main.js file in the repo.
+# They should be uploaded to GitHub releases instead.
+main.js
+
+# Exclude sourcemaps
+*.map
+
+# obsidian
+data.json
+
+# Obsidian Sync conflict files
+*.sync-conflict-*
+
+# Backup files
+*.backup-*
+data.json.backup-*
+
+# Local diagnostic reports
+lint-errors.json
+build_errors.txt
+
+# Exclude macOS Finder (System Explorer) View States
+.DS_Store
+
+# UI-check screenshots
+artifacts/
+
+# Runtime task data (written by TasksService)
+daily-tasks.json
