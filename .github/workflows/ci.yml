@@ -1,0 +1,35 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 519 existing lint errors; step is non-blocking until the debt is cleaned up.
+      - name: Lint (non-blocking until existing lint debt is fixed)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Typecheck + production build (tsc + esbuild)
+        run: npm run build
+
+      - name: Tests (vitest)
+        run: npm test
