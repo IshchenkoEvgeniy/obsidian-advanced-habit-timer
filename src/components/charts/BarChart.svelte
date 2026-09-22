@@ -3,7 +3,7 @@
     import { tweened } from 'svelte/motion';
     import { cubicOut } from 'svelte/easing';
 
-    export interface BarData {
+    interface BarData {
         label: string;
         date: string;
         segments: { label: string; value: number; color: string; subtext?: string }[];

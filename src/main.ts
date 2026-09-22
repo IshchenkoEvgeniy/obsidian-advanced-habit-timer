@@ -45,22 +45,25 @@ export default class HabitTimerPlugin extends Plugin {
     timerSessions: TimerSessionService;
     dashboardApiBridge: DashboardApiBridge;
     private currentThemeClass: string = '';
+    /** Pending deferred-startup timeout (heavy/network activity after layout settle). */
+    private deferredStartupTimer: number | null = null;
 
 
     async onload() {
         await this.loadSettings();
         this.applyTheme(this.settings.theme);
 
+        // Все сервисы создаются синхронно: вьюхи, настройки и команды могут
+        // обратиться к ним в любой момент. Откладывается только запуск
+        // сетевой/фоновой активности — см. scheduleDeferredStartup().
         this.telegram = new TelegramService(this);
         this.dailyNotes = new DailyNoteService(this.app, this);
         this.tasks = new TasksService(this);
-        await this.dailyNotes.normalizeSessionLog();
         this.companion = new CloudflareCompanionService(this);
         this.stateManager = new StateManager(this.app, this);
         this.projectEngine = new ProjectDataEngine(this.app, this);
         this.timerSessions = new TimerSessionService(this);
         this.dashboardApiBridge = new DashboardApiBridge(this);
-        this.dashboardApiBridge.start();
 
 
         this.statusBarItem = this.addStatusBarItem();
@@ -81,7 +84,7 @@ export default class HabitTimerPlugin extends Plugin {
             this.registerInterval(window.setInterval(()=>{void this.tasks.list().catch(error=>console.error('Task daily projection failed',error));},60000));
             for(const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODAY))void leaf.setViewState({type:VIEW_TYPE_OVERVIEW,active:false});
             void this.refreshStaleInteractiveViews();
-            this.companion.start();
+            this.scheduleDeferredStartup();
         });
 
         this.addRibbonIcon('layers', 'Focus Library', () => this.openFocusWindow());
@@ -163,8 +166,26 @@ export default class HabitTimerPlugin extends Plugin {
             }
         });
 
-        // Initialize Telegram background scheduler interval
-        this.telegram.startScheduler();
+        // Тяжёлые/сетевые сервисы стартуют отложенно (см. scheduleDeferredStartup)
+    }
+
+    /**
+     * Отложенный старт тяжёлой/сетевой активности: Telegram-поллинг и шедулер,
+     * Cloudflare companion sync, рассылка dashboard API и нормализация журнала
+     * сессий в дневнике. Объекты сервисов уже созданы, поэтому команды,
+     * настройки и вьюхи работают с первого мгновения — позже начинается только
+     * фоновая работа, чтобы не мешать первому рендеру рабочего пространства.
+     */
+    private scheduleDeferredStartup(): void {
+        if (this.deferredStartupTimer !== null) return;
+        this.deferredStartupTimer = window.setTimeout(() => {
+            this.deferredStartupTimer = null;
+            this.dashboardApiBridge.start();
+            this.companion.start();
+            this.telegram.startScheduler();
+            void this.dailyNotes.normalizeSessionLog()
+                .catch(error => console.error('Session log normalization failed', error));
+        }, 2000);
     }
 
     updateStatusBar(seconds: number) {
@@ -547,7 +568,14 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     onunload() {
-        this.dashboardApiBridge?.stop();
+        if (this.deferredStartupTimer !== null) {
+            // Отложенный старт не успел выполниться: чистим таймер и не дёргаем
+            // stop() у ещё не запущенного dashboard bridge (без ложного UNAVAILABLE).
+            window.clearTimeout(this.deferredStartupTimer);
+            this.deferredStartupTimer = null;
+        } else {
+            this.dashboardApiBridge?.stop();
+        }
         this.telegram.stopScheduler();
         this.companion.stop();
         this.stateManager.destroy();

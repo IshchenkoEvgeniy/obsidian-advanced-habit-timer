@@ -45,9 +45,10 @@
 
     let projectSubtasks: string[] = [];
     $: {
-        if ($activeProjectTaskFile && app) {
-            app.vault.cachedRead($activeProjectTaskFile).then(content => {
-                const cache = app.metadataCache.getFileCache($activeProjectTaskFile);
+        const taskFile = $activeProjectTaskFile;
+        if (taskFile && app) {
+            app.vault.cachedRead(taskFile).then(content => {
+                const cache = app.metadataCache.getFileCache(taskFile);
                 if (cache?.listItems) {
                     const lines = content.split('\n');
                     projectSubtasks = cache.listItems

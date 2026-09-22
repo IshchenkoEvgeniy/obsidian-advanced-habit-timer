@@ -3,6 +3,7 @@
     import { moment, Notice } from 'obsidian';
     import type { App, WorkspaceLeaf } from 'obsidian';
     import { t } from '../i18n';
+    import type { TranslationKey } from '../i18n';
     import type HabitTimerPlugin from '../main';
     import type { MediaItem } from '../store/StateManager';
     import type { Frontmatter } from '../utils/frontmatter';
@@ -257,11 +258,9 @@
             });
             new Notice(lang === 'ru' ? `«${item.title}»: чтение начато` : `Started “${item.title}”`);
         }
-        await plugin.startTimerForMedia({
-            ...item,
-            status: collection.readingStatusName,
-            startDate
-        });
+        // startTimerForMedia использует только collectionId/file/title —
+        // дополнительные поля (status/startDate) в вызов не передаются
+        await plugin.startTimerForMedia(item);
     }
 
     async function pauseMedia(item: MediaItem): Promise<void> {
@@ -309,7 +308,9 @@
 
 <div class="library-controls">
     <div class="category-chips">
-        <button class="chip" class:active={currentCollectionId === 'all'} on:click={() => currentCollectionId = 'all'}>{t(lang, 'all') || 'All'}</button>
+        <!-- Ключи 'all', 'sort_author_asc', 'sort_author_desc' отсутствуют в локалях:
+             t() возвращает сам ключ (привычное поведение), i18n намеренно не расширяется -->
+        <button class="chip" class:active={currentCollectionId === 'all'} on:click={() => currentCollectionId = 'all'}>{t(lang, 'all' as string as TranslationKey) || 'All'}</button>
         {#each collections as collection}
             <button class="chip" class:active={currentCollectionId === collection.id} on:click={() => currentCollectionId = collection.id}>{collection.id}</button>
         {/each}
@@ -318,8 +319,8 @@
     <select bind:value={sortOption} aria-label={lang === 'ru' ? 'Сортировка' : 'Sort'}>
         <option value="title-asc">{t(lang, 'sort_title_asc')}</option>
         <option value="title-desc">{t(lang, 'sort_title_desc')}</option>
-        <option value="author-asc">{t(lang, 'sort_author_asc')}</option>
-        <option value="author-desc">{t(lang, 'sort_author_desc')}</option>
+        <option value="author-asc">{t(lang, 'sort_author_asc' as string as TranslationKey)}</option>
+        <option value="author-desc">{t(lang, 'sort_author_desc' as string as TranslationKey)}</option>
         <option value="rating-desc">{t(lang, 'sort_rating_desc')}</option>
         <option value="progress-desc">{t(lang, 'sort_progress_desc')}</option>
     </select>

@@ -32,7 +32,7 @@
     }
     function monthLabel(id: string): string {
         const [year, month] = id.split('-').map(Number);
-        return monthFormatter.format(new Date(Date.UTC(year, (month ?? 1) - 1, 1)));
+        return monthFormatter.format(new Date(Date.UTC(year ?? NaN, (month ?? 1) - 1, 1)));
     }
     function dateLabel(key: string): string {
         return dayFormatter.format(new Date(`${key}T12:00:00Z`));

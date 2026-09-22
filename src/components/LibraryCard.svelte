@@ -143,7 +143,7 @@
     .media-visual::after { content:""; position:absolute; inset:0; background:linear-gradient(to top,rgba(10,10,14,.97) 0%,rgba(10,10,14,.32) 72%); }
     .generated-poster { height:100%; display:flex; flex-direction:column; justify-content:flex-start; gap:10px; padding:54px 22px 130px; background:linear-gradient(145deg,var(--background-secondary-alt),var(--background-primary-alt)); color:var(--text-normal); }
     .generated-poster span { font-size:.7rem; text-transform:uppercase; color:var(--text-accent); }
-    .generated-poster strong { display:-webkit-box; overflow:hidden; font-size:1.15rem; line-height:1.25; overflow-wrap:anywhere; opacity:.45; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+    .generated-poster strong { display:-webkit-box; overflow:hidden; font-size:1.15rem; line-height:1.25; overflow-wrap:anywhere; opacity:.45; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; }
     .badges { position:absolute; top:9px; left:9px; right:9px; display:flex; gap:6px; flex-wrap:wrap; }
     .badge { padding:3px 7px; border-radius:4px; font-size:.65rem; font-weight:700; background:rgba(15,15,20,.82); color:#fff; }
     .badge.format { color:#bcd7ff; }
@@ -158,7 +158,7 @@
     .card-title { margin-bottom:4px; font-size:.95rem; font-weight:700; line-height:1.25; overflow-wrap:anywhere; }
     .meta-link { display:block; max-width:100%; height:auto; padding:0; border:0; box-shadow:none; background:transparent; color:#d4d4dc; font-size:.75rem; line-height:1.35; text-align:left; white-space:normal; overflow-wrap:anywhere; }
     .meta-link:hover { color:#fff; text-decoration:underline; background:transparent; }
-    .meta-links { display:-webkit-box; overflow:hidden; color:#d4d4dc; font-size:.75rem; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+    .meta-links { display:-webkit-box; overflow:hidden; color:#d4d4dc; font-size:.75rem; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; }
     .meta-links .meta-link { display:inline; }
     .card-meta,.rating,.progress-text,.pace-text { font-size:.7rem; color:#c7c7cf; }
     .card-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

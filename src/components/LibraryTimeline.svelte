@@ -136,7 +136,7 @@
             if (!tableMatch?.[1]) return [];
             return tableMatch[1].split('\n')
                 .filter(line => line.trim().startsWith('|') && !line.includes('---') && !line.toLowerCase().includes('date |'))
-                .map((line, index) => {
+                .map((line, index): TimelineEvent | null => {
                     const columns = line.split('|').map(value => value.trim()).slice(1);
                     const date = columns[0] || '';
                     if (!parseDate(date)) return null;
@@ -178,7 +178,7 @@
             const date = new Date(center);
             date.setDate(center.getDate() + index - 4);
             const key = toDateKey(date);
-            return { key, weekday: WEEKDAYS[lang][date.getDay()], day: date.getDate(), hasEvents: eventDates.has(key) };
+            return { key, weekday: WEEKDAYS[lang][date.getDay()] ?? '', day: date.getDate(), hasEvents: eventDates.has(key) };
         });
     }
 

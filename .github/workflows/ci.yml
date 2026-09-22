@@ -28,6 +28,9 @@ jobs:
         working-directory: cloudflare-companion
         run: npm ci
 
+      - name: Svelte-check (.svelte types)
+        run: npm run check
+
       - name: Lint (eslint)
         run: npm run lint
 

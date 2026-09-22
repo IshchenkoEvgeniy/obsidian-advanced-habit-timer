@@ -105,7 +105,7 @@
                 if (i.endDate) {
                     const d = new Date(i.endDate);
                     if (!isNaN(d.getTime()) && d.getFullYear() === currentYear) {
-                        mCounts[d.getMonth()]++;
+                        mCounts[d.getMonth()] = (mCounts[d.getMonth()] || 0) + 1;
                     }
                 }
 
@@ -125,7 +125,7 @@
 
             // Build genre bars
             let gArr = Object.entries(gCounts).map(([label, value], i) => ({
-                label, value, color: colors[i % colors.length], perc: 0
+                label, value, color: colors[i % colors.length] ?? '', perc: 0
             })).sort((a, b) => b.value - a.value);
             const gTotal = gArr.reduce((s, x) => s + x.value, 0) || 1;
             gArr.forEach(x => { x.perc = (x.value / gTotal) * 100; });
@@ -134,7 +134,7 @@
             // Build rating bars
             let rArr = Object.entries(rCounts)
                 .sort((a, b) => getRatingValue(b[0]) - getRatingValue(a[0]))
-                .map(([rating, value], i) => ({ label: `${rating} ⭐`, value, color: colors[i % colors.length], perc: 0 }));
+                .map(([rating, value], i) => ({ label: `${rating} ⭐`, value, color: colors[i % colors.length] ?? '', perc: 0 }));
             const rTotal = rArr.reduce((s, x) => s + x.value, 0) || 1;
             rArr.forEach(x => { x.perc = (x.value / rTotal) * 100; });
             ratingsData = rArr;
@@ -144,7 +144,7 @@
             const maxM = Math.max(...mCounts, 1);
             monthlyData = mCounts.map((value, idx) => ({
                 month: idx,
-                label: months[idx],
+                label: months[idx] ?? '',
                 value,
                 perc: (value / maxM) * 100,
                 isCurrent: idx === currentMonth

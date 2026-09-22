@@ -3,7 +3,7 @@
     import { setIcon } from 'obsidian';
     import type { Action } from 'svelte/action';
 
-    export interface FilterOption {
+    interface FilterOption {
         value: string;
         label: string;
     }

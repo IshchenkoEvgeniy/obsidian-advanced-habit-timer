@@ -26,8 +26,10 @@
         'missing-unit': { ru: 'Не указана единица прогресса', en: 'Missing progress unit', icon: 'ruler' }
     };
     let filter: DataIssueKind | 'all' = 'all';
+    let issues: DataHealthIssue[] = [];
     let refreshVersion = 0;
-    $: issues = (refreshVersion, analyzeLibraryData(items, plugin.settings));
+    // refreshVersion инкрементируется миграционным модалом, чтобы принудительно пересчитать issues
+    $: if (refreshVersion >= 0) issues = analyzeLibraryData(items, plugin.settings);
     $: visibleIssues = filter === 'all' ? issues : issues.filter(issue => issue.kind === filter);
     $: migrationChanges = buildMigrationPreview(items, plugin.settings);
     $: affectedFiles = new Set(issues.map(issue => issue.item.file.path)).size;

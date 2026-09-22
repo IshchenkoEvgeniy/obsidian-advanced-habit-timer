@@ -47,7 +47,7 @@
         const byDate: Record<string, any[]> = {};
         filteredRecords.forEach(r => {
             if (!byDate[r.date]) byDate[r.date] = [];
-            byDate[r.date].push(r);
+            byDate[r.date]!.push(r);
         });
         let scores: number[] = [];
         Object.values(byDate).forEach(dayRecs => {

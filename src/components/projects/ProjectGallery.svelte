@@ -155,7 +155,7 @@
     .visual { position:relative; height:150px; overflow:hidden; background:var(--background-secondary-alt); }
     .visual img { width:100%; height:100%; object-fit:cover; }
     .poster { display:flex; align-items:flex-end; height:100%; padding:16px; background:linear-gradient(160deg, var(--background-secondary) 0%, var(--background-secondary-alt) 100%); }
-    .poster strong { display:-webkit-box; overflow:hidden; color:var(--text-faint); font-size:1.02rem; line-height:1.25; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
+    .poster strong { display:-webkit-box; overflow:hidden; color:var(--text-faint); font-size:1.02rem; line-height:1.25; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; }
     .image-nav { position:absolute; top:50%; width:28px; height:28px; padding:5px; transform:translateY(-50%); background:rgba(20,20,24,.8); color:#fff; }
     .image-nav.previous { left:5px; }
     .image-nav.next { right:5px; }
