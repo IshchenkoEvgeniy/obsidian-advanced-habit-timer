@@ -28,10 +28,8 @@ jobs:
         working-directory: cloudflare-companion
         run: npm ci
 
-      # 519 existing lint errors; step is non-blocking until the debt is cleaned up.
-      - name: Lint (non-blocking until existing lint debt is fixed)
+      - name: Lint (eslint)
         run: npm run lint
-        continue-on-error: true
 
       - name: Typecheck + production build (tsc + esbuild)
         run: npm run build
