@@ -9,7 +9,8 @@
     import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
     import type { ViewContext } from '../../projects/views/base-view';
     import type { BoardView } from '../../projects/views/board-view';
-    import { isDone } from '../../utils/status';
+    import { t } from '../../i18n';
+import { isDone } from '../../utils/status';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -110,7 +111,7 @@
     }
 
     async function deleteTask(task: ProjectTask): Promise<void> {
-        const message = lang === 'ru' ? `Удалить задачу «${task.name}»?` : `Delete task “${task.name}”?`;
+        const message = lang === 'ru' ? `РЈРґР°Р»РёС‚СЊ Р·Р°РґР°С‡Сѓ В«${task.name}В»?` : `Delete task вЂњ${task.name}вЂќ?`;
         if (!await view.confirmModal(message)) return;
         await view.dataEngine.deleteTask(task, scope.sourceType === 'file');
         const next = new Set(ctx.selectedTasks);
@@ -121,7 +122,7 @@
 
     async function duplicateTask(task: ProjectTask): Promise<void> {
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), {
-            name: `${task.name} (${lang === 'ru' ? 'копия' : 'copy'})`
+            name: `${task.name} (${lang === 'ru' ? 'РєРѕРїРёСЏ' : 'copy'})`
         });
         await view.dataEngine.createTask(scope, data);
         ctx.onRefresh();
@@ -155,14 +156,14 @@
         return keys[value] ? t(lang, keys[value]) : value;
     }
 
-    /** Quick deadline action — writes startDate/endDate through the regular saveTask path. */
+    /** Quick deadline action вЂ” writes startDate/endDate through the regular saveTask path. */
     async function setDeadline(task: ProjectTask, endDate: string): Promise<void> {
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { endDate });
         await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
         ctx.onRefresh();
     }
 
-    /** Quick priority action — writes priority through the regular saveTask path. */
+    /** Quick priority action вЂ” writes priority through the regular saveTask path. */
     async function setPriority(task: ProjectTask, priority?: string): Promise<void> {
         if ((task.priority || undefined) === priority) return;
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { priority });
@@ -255,7 +256,7 @@
 </script>
 
 {#if subProjects}
-    <section class="subprojects" aria-label={lang === 'ru' ? 'Подпроекты' : 'Subprojects'}>
+    <section class="subprojects" aria-label={lang === 'ru' ? 'РџРѕРґРїСЂРѕРµРєС‚С‹' : 'Subprojects'}>
         {#each Object.entries(subProjects) as [name, summary] (name)}
             <div class="subproject">
                 <span class="subproject-name">{name}</span>
