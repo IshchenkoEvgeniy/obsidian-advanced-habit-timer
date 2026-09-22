@@ -38,12 +38,12 @@ jobs:
       - name: Package plugin zip
         run: |
           test -f main.js
-          mkdir -p dist
-          cp main.js manifest.json styles.css dist/
-          cd dist
-          zip "../obsidian-advanced-habit-timer-${{ steps.version.outputs.version }}.zip" main.js manifest.json styles.css
+          # Zip contains a top-level folder: extract straight into .obsidian/plugins/
+          mkdir -p "obsidian-advanced-habit-timer"
+          cp main.js manifest.json styles.css "obsidian-advanced-habit-timer/"
+          zip -r "obsidian-advanced-habit-timer-${{ steps.version.outputs.version }}.zip" "obsidian-advanced-habit-timer"
 
-      # Ручной запуск: только артефакт, без публикации релиза.
+      # Р СѓС‡РЅРѕР№ Р·Р°РїСѓСЃРє: С‚РѕР»СЊРєРѕ Р°СЂС‚РµС„Р°РєС‚, Р±РµР· РїСѓР±Р»РёРєР°С†РёРё СЂРµР»РёР·Р°.
       - name: Upload build artifact (manual run)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4

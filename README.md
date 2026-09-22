@@ -26,7 +26,21 @@ English summary below ↓
 - **Telegram: Send Morning Plan Briefing** / **Send Evening Summary Report**.
 - **Update Daily Note Project Log**, **Migrate Media Frontmatter (Legacy to New)**.
 
-## Установка (из исходников)
+## Установка
+
+**Вариант 1 — из релиза (рекомендуется):**
+
+1. Скачайте последний архив со страницы [Releases](https://github.com/IshchenkoEvgeniy/obsidian-advanced-habit-timer/releases) — `obsidian-advanced-habit-timer-<версия>.zip`.
+2. Распакуйте его в папку плагинов хранилища: `<хранилище>/.obsidian/plugins/` — внутри появится папка `obsidian-advanced-habit-timer` с файлами `main.js`, `manifest.json`, `styles.css`.
+3. Перезапустите Obsidian и включите плагин: Настройки → Сторонние плагины.
+
+**Вариант 2 — через BRAT:**
+
+1. Установите и включите [BRAT](https://github.com/TfTHacker/obsidian42-brat).
+2. Выполните команду `BRAT: Add a beta plugin for testing` и введите `IshchenkoEvgeniy/obsidian-advanced-habit-timer`.
+3. BRAT будет предлагать обновления при новых релизах.
+
+**Вариант 3 — из исходников:**
 
 ```bash
 npm install
