@@ -111,7 +111,7 @@ import { isDone } from '../../utils/status';
     }
 
     async function deleteTask(task: ProjectTask): Promise<void> {
-        const message = lang === 'ru' ? `РЈРґР°Р»РёС‚СЊ Р·Р°РґР°С‡Сѓ В«${task.name}В»?` : `Delete task вЂњ${task.name}вЂќ?`;
+        const message = lang === 'ru' ? `Р В Р в‚¬Р В РўвЂР В Р’В°Р В Р’В»Р В РЎвЂР РЋРІР‚С™Р РЋР Р‰ Р В Р’В·Р В Р’В°Р В РўвЂР В Р’В°Р РЋРІР‚РЋР РЋРЎвЂњ Р вЂ™Р’В«${task.name}Р вЂ™Р’В»?` : `Delete task Р Р†Р вЂљРЎС™${task.name}Р Р†Р вЂљРЎСљ?`;
         if (!await view.confirmModal(message)) return;
         await view.dataEngine.deleteTask(task, scope.sourceType === 'file');
         const next = new Set(ctx.selectedTasks);
@@ -122,7 +122,7 @@ import { isDone } from '../../utils/status';
 
     async function duplicateTask(task: ProjectTask): Promise<void> {
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), {
-            name: `${task.name} (${lang === 'ru' ? 'РєРѕРїРёСЏ' : 'copy'})`
+            name: `${task.name} (${lang === 'ru' ? 'Р В РЎвЂќР В РЎвЂўР В РЎвЂ”Р В РЎвЂР РЋР РЏ' : 'copy'})`
         });
         await view.dataEngine.createTask(scope, data);
         ctx.onRefresh();
@@ -156,14 +156,14 @@ import { isDone } from '../../utils/status';
         return keys[value] ? t(lang, keys[value]) : value;
     }
 
-    /** Quick deadline action вЂ” writes startDate/endDate through the regular saveTask path. */
+    /** Quick deadline action Р Р†Р вЂљРІР‚Сњ writes startDate/endDate through the regular saveTask path. */
     async function setDeadline(task: ProjectTask, endDate: string): Promise<void> {
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { endDate });
         await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
         ctx.onRefresh();
     }
 
-    /** Quick priority action вЂ” writes priority through the regular saveTask path. */
+    /** Quick priority action Р Р†Р вЂљРІР‚Сњ writes priority through the regular saveTask path. */
     async function setPriority(task: ProjectTask, priority?: string): Promise<void> {
         if ((task.priority || undefined) === priority) return;
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { priority });
@@ -256,7 +256,7 @@ import { isDone } from '../../utils/status';
 </script>
 
 {#if subProjects}
-    <section class="subprojects" aria-label={lang === 'ru' ? 'РџРѕРґРїСЂРѕРµРєС‚С‹' : 'Subprojects'}>
+    <section class="subprojects" aria-label={lang === 'ru' ? 'Р В РЎСџР В РЎвЂўР В РўвЂР В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В Р’ВµР В РЎвЂќР РЋРІР‚С™Р РЋРІР‚в„–' : 'Subprojects'}>
         {#each Object.entries(subProjects) as [name, summary] (name)}
             <div class="subproject">
                 <span class="subproject-name">{name}</span>
@@ -384,7 +384,7 @@ import { isDone } from '../../utils/status';
     .subproject-bar { grid-column:1/-1; height:4px; overflow:hidden; border-radius:2px; background:var(--background-modifier-border); }
     .subproject-bar span { display:block; height:100%; border-radius:2px; background:var(--interactive-accent); }
 
-    .kanban-board { display:flex; gap:12px; min-height:100%; padding:2px; overflow-x:auto; align-items:stretch; }
+    .kanban-board { display:flex; gap:12px; padding:2px; overflow-x:auto; align-items:flex-start; }
     .kanban-column { display:flex; flex:0 0 300px; flex-direction:column; min-width:0; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); transition:outline .1s ease, background .12s ease; }
     .kanban-column.drag-over { outline:2px dashed var(--interactive-accent); outline-offset:-2px; background:var(--background-modifier-hover); }
     .kanban-column > header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:44px; padding:8px 8px 8px 12px; border-bottom:1px solid var(--background-modifier-border); }
@@ -392,7 +392,7 @@ import { isDone } from '../../utils/status';
     .col-title .dot { display:block; flex-shrink:0; width:9px; height:9px; border-radius:50%; background:var(--column-color); }
     h3 { margin:0; overflow:hidden; font-size:.9rem; text-overflow:ellipsis; white-space:nowrap; }
     .count { min-width:22px; padding:1px 7px; border-radius:9px; background:color-mix(in srgb, var(--column-color) 14%, transparent); color:var(--column-color); font-size:.68rem; font-weight:600; text-align:center; }
-    .column-actions button, .quick button { display:grid; place-items:center; width:27px; height:27px; padding:5px; }
+    .column-actions button, .quick button { display:grid; place-items:center; width:27px; height:27px; min-height:0; padding:5px; box-shadow:none; }
     .column-actions span, .quick span, .collapsed-column > span { width:15px; height:15px; }
     .cards { display:flex; flex:1; flex-direction:column; gap:9px; min-height:80px; padding:9px; overflow-y:auto; }
 
@@ -403,7 +403,7 @@ import { isDone } from '../../utils/status';
 
     .card-heading { display:flex; align-items:flex-start; gap:8px; padding:11px 11px 5px; }
     .card-heading input { flex:0 0 auto; margin-top:3px; }
-    .task-title { flex:1; min-width:0; padding:0; border:0; background:transparent; box-shadow:none; color:var(--text-normal); font:inherit; font-size:.86rem; font-weight:600; line-height:1.3; text-align:left; overflow-wrap:anywhere; }
+    .task-title { display:block; flex:1; min-width:0; height:auto; min-height:0; padding:0; border:0; background:transparent; box-shadow:none; color:var(--text-normal); font:inherit; font-size:.86rem; font-weight:600; line-height:1.3; text-align:left; overflow-wrap:anywhere; }
     .task-title:hover { background:transparent; color:var(--text-accent); }
     .pill { display:inline-flex; flex:0 0 auto; align-items:center; padding:1px 8px; border-radius:999px; font-size:.58rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
     .priority { border:1px solid currentColor; background:var(--background-secondary); }
@@ -437,11 +437,11 @@ import { isDone } from '../../utils/status';
     @media (hover: none) { .quick { opacity:1; } }
     .quick button.active { color:var(--text-success); }
 
-    .column-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:96px; padding:14px; border:1px dashed var(--background-modifier-border); border-radius:var(--radius-m); color:var(--text-faint); font-size:.72rem; text-align:center; transition:border-color .12s ease, background .12s ease; }
+    .column-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:72px; padding:12px; margin:0 9px 9px; border:1px dashed var(--background-modifier-border); border-radius:var(--radius-m); color:var(--text-faint); font-size:.72rem; text-align:center; transition:border-color .12s ease, background .12s ease; }
     .column-empty.active { border-color:var(--interactive-accent); background:color-mix(in srgb, var(--interactive-accent) 7%, transparent); }
     .column-empty .empty-icon :global(svg) { width:22px; height:22px; }
 
-    .collapsed-column { display:flex; flex:0 0 40px; width:40px; align-items:center; gap:10px; padding:9px 7px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); color:var(--text-muted); writing-mode:vertical-rl; }
+    .collapsed-column { display:flex; flex:0 0 40px; width:40px; height:auto; min-height:0; align-items:center; gap:10px; padding:9px 7px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); color:var(--text-muted); writing-mode:vertical-rl; }
     .collapsed-column strong { overflow:hidden; font-size:.76rem; text-overflow:ellipsis; white-space:nowrap; }
     .collapsed-column small { color:var(--text-faint); }
 
