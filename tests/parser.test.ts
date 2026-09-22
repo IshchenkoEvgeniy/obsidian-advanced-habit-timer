@@ -1,8 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ProjectParser } from '../src/projects/engine/parser';
 import { App, TFile } from 'obsidian';
-import type { ProjectScopeDefinition } from '../src/projects/types';
+import type { ProjectScopeDefinition, ProjectTask } from '../src/projects/types';
 import type { ProjectCache } from '../src/projects/engine/cache';
+
+/** Typed view of the parser's private members used by the parseSingleFile test. */
+interface ParserInternals {
+    app: {
+        metadataCache: { getFileCache: (file: TFile) => { frontmatter: Record<string, unknown> } | null };
+        vault: {
+            read: (file: TFile) => Promise<string>;
+            modify: (file: TFile, data: string) => Promise<void>;
+        };
+    };
+    parseSingleFile(file: TFile, columns: string[], scope: ProjectScopeDefinition): Promise<ProjectTask[]>;
+}
 
 describe('ProjectParser', () => {
 
@@ -79,11 +91,12 @@ describe('ProjectParser', () => {
 
     describe('parseSingleFile (Markdown Regex)', () => {
         it('should parse all task metadata correctly', async () => {
-            // We use cast to any to access the private method
-            const p = parser as any;
+            // We use a typed cast to access the private members
+            const p = parser as unknown as ParserInternals;
 
             // Mock a TFile and app vault
-            const mockFile = { path: 'test.md', stat: { mtime: 1 } } as TFile;
+            const mockFile = new TFile('test.md');
+            mockFile.stat.mtime = 1;
             
             p.app = {
                 metadataCache: {
@@ -112,31 +125,31 @@ describe('ProjectParser', () => {
             const tasks = await p.parseSingleFile(mockFile, columns, scope);
 
             expect(tasks).toHaveLength(6);
-            expect(new Set(tasks.map((task: any) => task.id)).size).toBe(6);
+            expect(new Set(tasks.map(task => task.id)).size).toBe(6);
 
-            const tTime = tasks.find((t: any) => t.name === 'Task with time');
-            expect(tTime.timeSpentSec).toBe(90 * 60); // 1:30:00
-            expect(tTime.timeEstimatedSec).toBe(120 * 60); // 2:00:00
-            expect(tTime.status).toBe('To Do');
+            const tTime = tasks.find(t => t.name === 'Task with time');
+            expect(tTime!.timeSpentSec).toBe(90 * 60); // 1:30:00
+            expect(tTime!.timeEstimatedSec).toBe(120 * 60); // 2:00:00
+            expect(tTime!.status).toBe('To Do');
 
-            const tHabit = tasks.find((t: any) => t.name === 'Task with habit');
+            const tHabit = tasks.find(t => t.name === 'Task with habit');
             // 'Reading' should be matched as habit
-            expect(tHabit.habitName).toBe('Reading');
-            
-            const tPriority = tasks.find((t: any) => t.name === 'Task with priority');
-            expect(tPriority.priority).toBe('high');
+            expect(tHabit!.habitName).toBe('Reading');
 
-            const tDates = tasks.find((t: any) => t.name === 'Task with dates');
-            expect(tDates.startDate).toBe('2024-01-01');
-            expect(tDates.endDate).toBe('2024-01-10');
+            const tPriority = tasks.find(t => t.name === 'Task with priority');
+            expect(tPriority!.priority).toBe('high');
 
-            const tTags = tasks.find((t: any) => t.name.startsWith('Task with tags and images'));
-            expect(tTags.tags).toContain('project');
-            expect(tTags.images).toContain('http://link');
-            expect(tTags.images).toContain('img2.png');
+            const tDates = tasks.find(t => t.name === 'Task with dates');
+            expect(tDates!.startDate).toBe('2024-01-01');
+            expect(tDates!.endDate).toBe('2024-01-10');
 
-            const tCompleted = tasks.find((t: any) => t.name === 'Completed task');
-            expect(tCompleted.status).toBe('Done');
+            const tTags = tasks.find(t => t.name.startsWith('Task with tags and images'));
+            expect(tTags!.tags).toContain('project');
+            expect(tTags!.images).toContain('http://link');
+            expect(tTags!.images).toContain('img2.png');
+
+            const tCompleted = tasks.find(t => t.name === 'Completed task');
+            expect(tCompleted!.status).toBe('Done');
         });
     });
 });

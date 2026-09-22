@@ -4,8 +4,8 @@ import { projectTaskId } from '../src/projects/types';
 import { blockIdFromTaskLine, ensureTaskBlockIds, stripTaskBlockId } from '../src/projects/engine/task-identity';
 import { ProjectCache } from '../src/projects/engine/cache';
 import { projectTaskToData } from '../src/projects/task-data';
+import { TFile } from 'obsidian';
 import type { ProjectTask } from '../src/projects/types';
-import type { TFile } from 'obsidian';
 
 describe('project task identity', () => {
     it('distinguishes checklist tasks sharing a file', () => {
@@ -57,7 +57,7 @@ describe('project cache', () => {
 describe('project task updates', () => {
     it('preserves unrelated fields when one property changes', () => {
         const task: ProjectTask = {
-            id: 'file:Projects/Task.md', file: { path: 'Projects/Task.md' } as TFile,
+            id: 'file:Projects/Task.md', file: new TFile('Projects/Task.md'),
             name: 'Task', status: 'To Do', timeSpentSec: 120,
             timeEstimatedSec: 3600, habitName: 'Work', priority: 'high',
             startDate: '2026-07-20', endDate: '2026-07-25', tags: 'project, focus'

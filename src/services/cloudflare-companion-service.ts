@@ -2,6 +2,7 @@ import { moment, normalizePath, requestUrl, TFile } from 'obsidian';
 import { get as getStoreValue } from 'svelte/store';
 import type HabitTimerPlugin from '../main';
 import type { HabitExplicitState } from '../types';
+import type { DailyTask } from '../tasks/model';
 import { getDailyNotes, getNumber, getObject, getString, parseDuration } from '../utils';
 import type { Frontmatter } from '../utils/frontmatter';
 import { readHabitExplicitState } from '../habits/goals';
@@ -31,6 +32,50 @@ interface EventsResponse {
     ok?: boolean;
     events?: CompanionEvent[];
     nextCursor?: number;
+}
+
+/** Payload of a `daily_task_session` companion event. */
+interface DailyTaskSessionPayload {
+	task: DailyTask;
+	seconds: number;
+	startTime: string;
+	endTime: string;
+	note: string;
+	sessionId: string;
+}
+
+/** Payload of a `daily_task` companion event. */
+interface DailyTaskPayload {
+	task: DailyTask;
+	previous?: DailyTask;
+	requestId?: string;
+}
+
+/** Local mirror of the companion's BoardTask contract sent in project events. */
+interface CompanionProjectTask {
+	key: string;
+	scopeId: string;
+	scopeName: string;
+	path: string;
+	id?: string;
+	blockId?: string;
+	name: string;
+	status: string;
+	priority: string;
+	startDate: string;
+	endDate: string;
+	habitName: string;
+	timeSpentSec: number;
+	timeEstimatedSec: number;
+	subtasks: Array<{ text: string; checked: boolean }>;
+}
+
+/** Payload of `project_change` / `project_timer` companion events. */
+interface ProjectEventPayload {
+	action?: string;
+	task: CompanionProjectTask;
+	previous?: CompanionProjectTask;
+	seconds?: number;
 }
 
 export class CloudflareCompanionService {
@@ -136,17 +181,17 @@ export class CloudflareCompanionService {
 
     private async applyEvent(event: CompanionEvent): Promise<void> {
         if(event.event_type==='daily_task_session') {
-            const p=JSON.parse(event.payload_json);
+            const p=JSON.parse(event.payload_json) as DailyTaskSessionPayload;
             await this.plugin.tasks.session(p.task,p.seconds,p.startTime,p.endTime,p.note,p.sessionId,event.habit_date);
             return;
         }
         if (event.event_type === 'daily_task') {
-            const payload = JSON.parse(event.payload_json);
+            const payload = JSON.parse(event.payload_json) as DailyTaskPayload;
             await this.plugin.tasks.apply(payload.task, payload.previous, payload.requestId || event.event_id, event.habit_date);
             return;
         }
         if (event.event_type === 'project_change' || event.event_type === 'project_timer') {
-            await new CloudflareProjectService(this.plugin).apply(JSON.parse(event.payload_json), event.event_type === 'project_timer');
+            await new CloudflareProjectService(this.plugin).apply(JSON.parse(event.payload_json) as ProjectEventPayload, event.event_type === 'project_timer');
             return;
         }
         if (event.event_type === 'capture') {

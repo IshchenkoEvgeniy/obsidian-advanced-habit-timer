@@ -108,7 +108,7 @@ export class TinyBadgeWidget extends HabitWidget {
         // tap → open timer view
         this.container.setCssStyles({ cursor: 'pointer' });
         this.container.onclick = () => {
-            (this.plugin as any).activateView('habit-timer-view');
+            void this.plugin.activateView('habit-timer-view');
         };
     }
 }

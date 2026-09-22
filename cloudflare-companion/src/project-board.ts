@@ -10,6 +10,10 @@ export interface BoardTask {
 }
 export interface BoardScope { id: string; name: string; statuses: string; sourceType?: string; }
 interface DocumentRow { data_json: string; revision: number; pending: number; deleted: number; }
+interface BoardApiBody {
+ action?: string; key?: string; requestId?: string; revision?: number; confirm?: boolean;
+ task?: Record<string, unknown>;
+}
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 export async function syncBoard(db: D1Database, profile: string, tasks: BoardTask[], scopes: BoardScope[]): Promise<void> {
  const token = crypto.randomUUID();
@@ -25,20 +29,20 @@ export async function syncBoard(db: D1Database, profile: string, tasks: BoardTas
 }
 async function scopesFor(db:D1Database,profile:string):Promise<BoardScope[]> {
  const row=await db.prepare('SELECT data_json FROM project_scopes WHERE profile_id=?').bind(profile).first<{data_json:string}>();
- return row?JSON.parse(row.data_json):[];
+ return row?JSON.parse(row.data_json) as BoardScope[]:[];
 }
 export async function boardApi(request:Request,env:Env,profile:string,config:CompanionConfigRow):Promise<Response>{
  const scopes=await scopesFor(env.DB,profile);
  if(request.method==='GET'){
   const rows=await env.DB.prepare('SELECT * FROM project_documents WHERE profile_id=? AND deleted=0').bind(profile).all<DocumentRow>();
-  return json({scopes,tasks:(rows.results||[]).map(r=>({...JSON.parse(r.data_json),revision:r.revision,pending:!!r.pending}))});
+  return json({scopes,tasks:(rows.results||[]).map(r=>({...JSON.parse(r.data_json) as BoardTask,revision:r.revision,pending:!!r.pending}))});
  }
  if(request.method!=='POST')return json({error:'method_not_allowed'},405);
- const body=await request.json() as Record<string,unknown>;
+ const body=await request.json() as BoardApiBody;
  const action=String(body.action||'');
  const key=typeof body.key==='string'?body.key:'';
  const row=key?await env.DB.prepare('SELECT * FROM project_documents WHERE profile_id=? AND task_key=?').bind(profile,key).first<DocumentRow>():null;
- const previous:BoardTask|null=row?JSON.parse(row.data_json):null;
+ const previous:BoardTask|null=row?JSON.parse(row.data_json) as BoardTask:null;
  if(action==='start'){
   if(!previous||row?.deleted)return json({error:'task_not_found'},404);
   const habit=parseHabits(config).find(h=>h.name===previous.habitName&&(h.type||'timer')==='timer');
@@ -57,9 +61,9 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
  if(action==='delete'&&body.confirm!==true)return json({error:'confirmation_required'},400);
  if(action==='delete'){
   const timer=await getTimer(env.DB,profile);
-  if(timer?.task_json&&JSON.parse(timer.task_json).key===key)return json({error:'task_timer_running'},409);
+  if(timer?.task_json&&(JSON.parse(timer.task_json) as BoardTask).key===key)return json({error:'task_timer_running'},409);
  }
- const raw=(body.task||{}) as Record<string,unknown>;
+ const raw:Record<string,unknown>=body.task||{};
  const scope=scopes.find(s=>s.id===(previous?.scopeId||raw.scopeId));
  if(!scope)return json({error:'scope_not_found'},400);
  const clean=(v:unknown,max=250)=>typeof v==='string'?v.trim().slice(0,max):'';
@@ -72,7 +76,7 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
  const columns=scope.statuses.split(',').map(s=>s.trim()).filter(Boolean);
  if(action==='create'){
   const names=await env.DB.prepare('SELECT data_json FROM project_documents WHERE profile_id=? AND deleted=0').bind(profile).all<{data_json:string}>();
-  if((names.results||[]).some(r=>{const t:BoardTask=JSON.parse(r.data_json);return t.scopeId===scope.id&&t.name.toLocaleLowerCase()===task.name.toLocaleLowerCase();}))return json({error:'task_duplicate'},409);
+  if((names.results||[]).some(r=>{const t:BoardTask=JSON.parse(r.data_json) as BoardTask;return t.scopeId===scope.id&&t.name.toLocaleLowerCase()===task.name.toLocaleLowerCase();}))return json({error:'task_duplicate'},409);
  }
  const validDate=(date:string)=>!date||(/^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date);
  if(!task.name||/[\r\n\\/:*?"<>|]/.test(task.name)||!columns.includes(task.status)||!validDate(task.startDate)||!validDate(task.endDate)
@@ -94,7 +98,7 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
 
 export async function recordProjectTime(db:D1Database,profile:string,task:BoardTask,seconds:number,date:string):Promise<void>{
  const row=await db.prepare('SELECT data_json FROM project_documents WHERE profile_id=? AND task_key=? AND deleted=0').bind(profile,task.key).first<{data_json:string}>();
- const current:BoardTask=row?JSON.parse(row.data_json):task;
+ const current:BoardTask=row?JSON.parse(row.data_json) as BoardTask:task;
  const next={...current,timeSpentSec:current.timeSpentSec+seconds};
  await db.batch([
  db.prepare('UPDATE project_documents SET data_json=?,revision=revision+1,pending=1 WHERE profile_id=? AND task_key=?').bind(JSON.stringify(next),profile,task.key),

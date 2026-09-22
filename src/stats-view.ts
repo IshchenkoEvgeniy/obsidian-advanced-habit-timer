@@ -12,7 +12,7 @@ export const VIEW_TYPE_STATS = "habit-timer-stats-view";
 export class StatsView extends ItemView {
     plugin: HabitTimerPlugin;
     container: HTMLElement;
-    svelteApp: any;
+    svelteApp: Record<string, unknown>;
 
     constructor(leaf: WorkspaceLeaf, plugin: HabitTimerPlugin) { 
         super(leaf); 
@@ -42,7 +42,7 @@ export class StatsView extends ItemView {
 
     render() {
         if (this.svelteApp) {
-            try { void unmount(this.svelteApp); } catch (e) { /* ignore */ }
+            try { void unmount(this.svelteApp); } catch { /* ignore */ }
         }
 
         try {
@@ -54,15 +54,16 @@ export class StatsView extends ItemView {
                     view: this
                 }
             });
-        } catch (e: any) {
-            new Notice("StatsApp mount error: " + e.message, 10000);
-            this.container.createEl("div", { text: "Error loading stats: " + e.stack, attr: { style: 'color: red; padding: 20px; white-space: pre-wrap;' }});
+        } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            new Notice("StatsApp mount error: " + err.message, 10000);
+            this.container.createEl("div", { text: "Error loading stats: " + err.stack, attr: { style: 'color: red; padding: 20px; white-space: pre-wrap;' }});
         }
     }
     
     async onClose() {
         if (this.svelteApp) {
-            try { await unmount(this.svelteApp); } catch (e) { /* ignore */ }
+            try { await unmount(this.svelteApp); } catch { /* ignore */ }
         }
     }
 
@@ -73,7 +74,7 @@ export class StatsView extends ItemView {
         });
     }
 
-    static renderUnifiedHeatmap(parent: HTMLElement, plugin: HabitTimerPlugin, records: any[], options: any) {
+    static renderUnifiedHeatmap(parent: HTMLElement, plugin: HabitTimerPlugin, records: unknown[], options: Record<string, unknown>) {
         return mount(HeatmapWrapper, {
             target: parent,
             props: { plugin, records, options }

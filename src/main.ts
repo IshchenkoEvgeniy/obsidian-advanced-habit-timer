@@ -3,7 +3,6 @@ import { StatsView, VIEW_TYPE_STATS } from './stats-view';
 import { LibraryView, VIEW_TYPE_LIBRARY } from './library-view';
 import { ProjectsView, VIEW_TYPE_PROJECTS } from './projects-view';
 import { formatDuration } from './utils';
-import { t } from './i18n';
 import { ProjectDataEngine } from './projects/project-data';
 import { DEFAULT_SETTINGS } from './types';
 import { defaultDailyGoal, defaultDailyGoalUnit } from './library/daily-goals';
@@ -244,7 +243,7 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     async loadSettings() {
-        const loadedData = await this.loadData();
+        const loadedData = (await this.loadData()) as Partial<HabitTimerSettings> | null;
         this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
         const habitIdsChanged = ensureHabitPropertyIds(this.settings.properties);
         this.settings.libraryPropertyAliases = normalizeAliases(this.settings.libraryPropertyAliases);

@@ -114,7 +114,7 @@ async function progressAction(request: Request, env: Env, profileId: string, con
   const requested = body.mode === 'exact' ? value : item.progress + value;
   if(body.sessionId){
     const row=await env.DB.prepare('SELECT data_json FROM session_history WHERE profile_id=? AND id=?').bind(profileId,body.sessionId).first<{data_json:string}>();
-    if(!row||JSON.parse(row.data_json).media?.id!==id)return json({error:'session_media_mismatch'},400);
+    if(!row||(JSON.parse(row.data_json) as {media?:{id?:number}|null}).media?.id!==id)return json({error:'session_media_mismatch'},400);
   }
   const updated = await setLibraryProgress(env.DB, profileId, id, requested, date, { time, note: typeof body.note==='string'?body.note.slice(0,2000):'Telegram Mini App',sessionId:body.sessionId });
   return json({ ok: true, item: publicItem(updated) });
@@ -137,7 +137,7 @@ function dailyGoals(habits: HabitConfig[], date: string, items: LibraryItemRow[]
         if (event.sequence <= (baseline?.throughSequence || 0)) continue;
         const item = byPath.get(event.habit_name); if (!item) continue;
         try {
-          const delta = Number(JSON.parse(event.payload_json)?.progressLog?.delta);
+          const delta = Number((JSON.parse(event.payload_json) as { progressLog?: { delta?: number } } | null)?.progressLog?.delta);
           const unit = /audio|аудио/i.test(item.format) ? 'minutes' : item.unit || goal.unit;
           value += convertDailyProgress(delta, unit, goal.unit);
         } catch { /* Ignore malformed old events. */ }

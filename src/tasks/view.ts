@@ -64,7 +64,7 @@ export class TasksView extends ItemView {
         }
     }
     private edit(existing?: DailyTask) {
-        const task:DailyTask=existing?JSON.parse(JSON.stringify(existing)):{id:crypto.randomUUID(),name:'',date:'',deadline:'',priority:'',done:false,deleted:false,habitName:'',subtasks:[],revision:0};
+        const task:DailyTask=existing?JSON.parse(JSON.stringify(existing)) as DailyTask:{id:crypto.randomUUID(),name:'',date:'',deadline:'',priority:'',done:false,deleted:false,habitName:'',subtasks:[],revision:0};
         const modal=new Modal(this.app);modal.titleEl.setText(existing?'Задание':'Новое задание');
         new Setting(modal.contentEl).setName('Название').addText(c=>c.setValue(task.name).onChange(v=>task.name=v));
         taskEditorFields(modal.contentEl,task);
@@ -74,7 +74,7 @@ export class TasksView extends ItemView {
         new Setting(modal.contentEl).setName('Приоритет').addDropdown(c=>c.addOptions({'':'Без приоритета',low:'Низкий',medium:'Средний',high:'Высокий'}).setValue(task.priority).onChange(v=>task.priority=v));
         new Setting(modal.contentEl).setName('Привычка').addDropdown(c=>{c.addOption('','Без привычки');for(const h of this.plugin.settings.properties.filter(h=>h.type==='timer'))c.addOption(h.name,h.name);c.setValue(task.habitName).onChange(v=>task.habitName=v);});
         const subs=modal.contentEl.createDiv();
-        const draw=()=>{subs.empty();task.subtasks.forEach((s,i)=>new Setting(subs).addToggle(c=>c.setValue(s.checked).onChange(v=>s.checked=v)).addText(c=>c.setValue(s.text).onChange(v=>s.text=v)).addText(c=>{c.inputEl.type='date';c.inputEl.setAttribute('aria-label','Дата подзадачи');c.setValue(s.date||'').onChange(v=>s.date=v);}).addExtraButton(c=>c.setIcon('trash').setTooltip('Удалить подзадачу').onClick(()=>{task.subtasks.splice(i,1);draw();})));};draw();
+        const draw=()=>{subs.empty();task.subtasks.forEach((s,i)=>{new Setting(subs).addToggle(c=>c.setValue(s.checked).onChange(v=>s.checked=v)).addText(c=>c.setValue(s.text).onChange(v=>s.text=v)).addText(c=>{c.inputEl.type='date';c.inputEl.setAttribute('aria-label','Дата подзадачи');c.setValue(s.date||'').onChange(v=>s.date=v);}).addExtraButton(c=>c.setIcon('trash').setTooltip('Удалить подзадачу').onClick(()=>{task.subtasks.splice(i,1);draw();}));});};draw();
         new Setting(modal.contentEl).addButton(c=>c.setButtonText('Добавить подзадачу').onClick(()=>{task.subtasks.push({text:'',checked:false});draw();}));
         new Setting(modal.contentEl).addButton(c=>c.setButtonText('Сохранить').setCta().onClick(async()=>{try{await this.plugin.tasks.save(task);modal.close();await this.render();}catch(e){new Notice(String(e));}}));
         if(existing)new Setting(modal.contentEl).addButton(c=>c.setButtonText('Удалить').setWarning().onClick(()=>{

@@ -11,7 +11,7 @@ export async function reconcileHabitTasks(env:Env,profile:string,config:Companio
     const {date}=zonedParts(now,config.timezone);
     const values=await getValues(env.DB,profile,date,date);
     const rows=await env.DB.prepare('SELECT data_json FROM daily_tasks WHERE profile_id=?').bind(profile).all<{data_json:string}>();
-    const tasks:DailyTask[]=(rows.results||[]).map(r=>JSON.parse(r.data_json));
+    const tasks:DailyTask[]=(rows.results||[]).map(r=>JSON.parse(r.data_json) as DailyTask);
     const input=habits.map(h=>({...h,desired:habitGoals(h,date).desired,value:values.find(v=>v.habit_name===h.name)?.value||0}));
     for(const next of await generateHabitTasks(input,tasks,date)){
         const previous=tasks.find(t=>t.id===next.id),task={...next,revision:next.revision+1};

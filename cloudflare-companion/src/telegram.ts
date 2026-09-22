@@ -423,7 +423,7 @@ export class TelegramBot {
     await this.showSuggestionStep(config, draft.step as 'authors' | 'genres' | 'series', parseDraftData(draft.data_json), query);
   }
 
-  private async advanceAfterAuthors(config: CompanionConfigRow, data: Record<string, unknown>): Promise<void> {
+  private async advanceAfterAuthors(config: CompanionConfigRow, data: MediaDraftData): Promise<void> {
     delete data.selected; delete data.suggestions;
     const authors = Array.isArray(data.authors) ? data.authors.filter(item => typeof item === 'string') : [];
     const duplicate = await findLibraryDuplicate(this.env.DB, this.profileId, String(data.title || ''), authors);
@@ -469,7 +469,7 @@ export class TelegramBot {
       const item = await getLibraryItem(this.env.DB, this.profileId, mediaId);
       if (!item) { await clearMediaDraft(this.env.DB, this.profileId); return true; }
       if (draft.step === 'progress_episode') {
-        const match = value.match(/^S?(\d+)\s*[:/\-]?\s*E?(\d+)$/i);
+        const match = value.match(/^S?(\d+)\s*[:/-]?\s*E?(\d+)$/i);
         if (!match) { await this.sendMessage(config, 'Format: S2E5'); return true; }
         const season = Number(match[1]); const episode = Number(match[2]);
         await this.queueProgressNote(config, data, episode, episode - item.progress, season, episode);
@@ -1088,7 +1088,7 @@ export function dailyMediaGoalLines(
         const item = byPath.get(event.habit_name);
         if (!item) continue;
         try {
-          const payload = JSON.parse(event.payload_json);
+          const payload = JSON.parse(event.payload_json) as { progressLog?: { delta?: number } } | null;
           const delta = Number(payload?.progressLog?.delta);
           const unit = /audio|аудио/i.test(item.format) ? 'minutes' : item.unit || goal.unit;
           value += convertDailyProgress(delta, unit, goal.unit);
@@ -1139,10 +1139,18 @@ function shortMediaUnit(unit: string, language: 'ru' | 'en'): string {
   const label = labels[normalized];
   return label ? label[language === 'ru' ? 1 : 0] : '';
 }
-function parseDraftData(value: string): Record<string, unknown> {
+// Fields of the media-draft JSON that are read back with a specific type; everything else stays unknown.
+interface MediaDraftData {
+  title?: string;
+  category?: string;
+  field?: string;
+  seriesIndex?: number;
+  [key: string]: unknown;
+}
+function parseDraftData(value: string): MediaDraftData {
   try {
     const parsed: unknown = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as MediaDraftData : {};
   } catch { return {}; }
 }
 export function splitValues(value: string): string[] {

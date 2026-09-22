@@ -859,14 +859,14 @@ export class MediaInteractionModal extends Modal {
         // Progress
         const progRow = editSection.createDiv('ht-edit-row');
         progRow.createEl('label', { text: `${lang === 'ru' ? 'Прогресс' : 'Progress'} (${dailyGoalUnitLabel(newUnit, lang === 'ru' ? 'ru' : 'en')})`, cls: 'ht-edit-label' });
-        const progInput = progRow.createEl('input', { cls: 'ht-edit-input', type: 'number' } as any);
+        const progInput = progRow.createEl('input', { cls: 'ht-edit-input', type: 'number' });
         progInput.value = newProgress;
         progInput.oninput = () => { newProgress = progInput.value; };
 
         // Total
         const totalRow = editSection.createDiv('ht-edit-row');
         totalRow.createEl('label', { text: `${lang === 'ru' ? 'Всего' : 'Total'} (${dailyGoalUnitLabel(newUnit, lang === 'ru' ? 'ru' : 'en')})`, cls: 'ht-edit-label' });
-        const totalInput = totalRow.createEl('input', { cls: 'ht-edit-input', type: 'number' } as any);
+        const totalInput = totalRow.createEl('input', { cls: 'ht-edit-input', type: 'number' });
         totalInput.value = newTotal;
         totalInput.oninput = () => { newTotal = totalInput.value; };
 
@@ -885,7 +885,7 @@ export class MediaInteractionModal extends Modal {
         // Rating
         const ratingRow = editSection.createDiv('ht-edit-row');
         ratingRow.createEl('label', { text: 'Rating', cls: 'ht-edit-label' });
-        const ratingInput = ratingRow.createEl('input', { cls: 'ht-edit-input' } as any);
+        const ratingInput = ratingRow.createEl('input', { cls: 'ht-edit-input' });
         ratingInput.value = newRating;
         ratingInput.placeholder = '7+';
         ratingInput.oninput = () => { newRating = ratingInput.value; };
@@ -893,27 +893,27 @@ export class MediaInteractionModal extends Modal {
         // Start Date
         const startRow = editSection.createDiv('ht-edit-row');
         startRow.createEl('label', { text: 'Start Date', cls: 'ht-edit-label' });
-        const startInput = startRow.createEl('input', { cls: 'ht-edit-input', type: 'date' } as any);
+        const startInput = startRow.createEl('input', { cls: 'ht-edit-input', type: 'date' });
         startInput.value = newStartDate;
         startInput.oninput = () => { newStartDate = startInput.value; };
 
         // End Date
         const endRow = editSection.createDiv('ht-edit-row');
         endRow.createEl('label', { text: 'End Date', cls: 'ht-edit-label' });
-        const endInput = endRow.createEl('input', { cls: 'ht-edit-input', type: 'date' } as any);
+        const endInput = endRow.createEl('input', { cls: 'ht-edit-input', type: 'date' });
         endInput.value = newEndDate;
         endInput.oninput = () => { newEndDate = endInput.value; };
 
         const queueRow = editSection.createDiv('ht-edit-row');
         queueRow.createEl('label', { text: lang === 'ru' ? 'Порядок в очереди' : 'Queue order', cls: 'ht-edit-label' });
-        const queueInput = queueRow.createEl('input', { cls: 'ht-edit-input', type: 'number' } as any);
+        const queueInput = queueRow.createEl('input', { cls: 'ht-edit-input', type: 'number' });
         queueInput.min = '0';
         queueInput.value = newQueueOrder;
         queueInput.oninput = () => { newQueueOrder = queueInput.value; };
 
         const targetRow = editSection.createDiv('ht-edit-row');
         targetRow.createEl('label', { text: lang === 'ru' ? 'Цель завершения' : 'Target date', cls: 'ht-edit-label' });
-        const targetInput = targetRow.createEl('input', { cls: 'ht-edit-input', type: 'date' } as any);
+        const targetInput = targetRow.createEl('input', { cls: 'ht-edit-input', type: 'date' });
         targetInput.value = newTargetDate;
         targetInput.oninput = () => { newTargetDate = targetInput.value; };
 
@@ -963,7 +963,7 @@ export class MediaInteractionModal extends Modal {
                     rows.push({ date: cols[0] || '', time: cols[1] || '', pages: cols[2] || '', progress: cols[3] || '', notes: cols[4] || '' });
                 }
             }
-        } catch (e) { /* silently ignore */ }
+        } catch { /* silently ignore */ }
         return rows;
     }
 

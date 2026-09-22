@@ -25,7 +25,7 @@ export async function snoozeTask(env:Env,profile:string,config:CompanionConfigRo
  const [,mode,id]=data.split(':');
  if(!['hour','tomorrow'].includes(mode||''))return;
  const row=await env.DB.prepare('SELECT data_json FROM daily_tasks WHERE profile_id=? AND id=?').bind(profile,id||'').first<{data_json:string}>();if(!row)return;
- const task:DailyTask=JSON.parse(row.data_json);if(task.deleted||task.done)return;
+ const task:DailyTask=JSON.parse(row.data_json) as DailyTask;if(task.deleted||task.done)return;
  const local=zonedParts(Date.now()+(mode==='hour'?3600000:0),config.timezone);
  const updated={...task,date:mode==='hour'?local.date:shiftDate(local.date,1),reminderTime:mode==='hour'?local.time:task.reminderTime||'09:00'};
  const response=await dailyTasksApi(new Request('https://internal/tasks',{method:'POST',body:JSON.stringify({task:updated,requestId:crypto.randomUUID()})}),env,profile,config);

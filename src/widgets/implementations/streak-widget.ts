@@ -3,7 +3,7 @@ import { HabitWidget } from '../types';
 import { getDailyNotes } from '../../utils';
 import { getHabitValueFromFrontmatter, calculateHabitStreak } from '../../services/habit-service';
 import { evaluateHabitState, getHabitGoals, readHabitExplicitState, statePreservesStreak } from '../../habits/goals';
-import type { HabitDayState, HabitExplicitState } from '../../types';
+import type { HabitDayState, HabitExplicitState, HabitProperty } from '../../types';
 
 /**
  * Widget 5 — Streak (default 1×2)
@@ -64,7 +64,7 @@ export class StreakWidget extends HabitWidget {
 
         // --- Flame icon + count ---
         const top = this.container.createDiv({ cls: 'ht-streak-top' });
-        const flameEl = top.createDiv({
+        top.createDiv({
             cls: `ht-streak-flame ${isHot ? 'ht-streak-hot' : ''} ${isBroken && currentStreak === 0 ? 'ht-streak-cold' : ''}`,
             text: '🔥',
         });
@@ -99,7 +99,7 @@ export class StreakWidget extends HabitWidget {
         });
     }
 
-    private async _getBestStreak(prop: any): Promise<number> {
+    private async _getBestStreak(prop: HabitProperty): Promise<number> {
         const dailyNotes = getDailyNotes(this.plugin.app, this.plugin.settings.dailyNotesFolder);
         if ((prop.goalMode || 'daily') === 'weekly') {
             const totals = new Map<string, number>();

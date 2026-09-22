@@ -5,6 +5,8 @@ import {TasksService} from '../src/tasks/service';
 import type HabitTimerPlugin from '../src/main';
 import {putTask,type DailyTask} from '../src/tasks/model';
 import {TFile} from 'obsidian';
+// Mirror of the non-exported TaskState shape in src/tasks/service.ts
+interface StoredState{tasks:DailyTask[],pending:{task:DailyTask,previous?:DailyTask,requestId:string,date:string}[]}
 
 it('generates and completes a habit task in the registry and daily note without duplicates',async()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-09-09T12:00:00Z'));
@@ -20,9 +22,9 @@ it('generates and completes a habit task in the registry and daily note without 
   fm.English='01:00:00';
   expect((await service.list())[0]?.done).toBe(true);
   await service.list();
-  expect(JSON.parse(stored).tasks).toHaveLength(1);
-  expect(JSON.parse(stored).tasks[0].history).toHaveLength(1);
-  expect(JSON.parse(stored).pending).toHaveLength(2);
+  expect((JSON.parse(stored) as StoredState).tasks).toHaveLength(1);
+  expect((JSON.parse(stored) as StoredState).tasks[0]!.history).toHaveLength(1);
+  expect((JSON.parse(stored) as StoredState).pending).toHaveLength(2);
   for(const path of ['Daily/2026-09-09.md','Daily/Задания.md']){
    expect(contents.get(path)?.match(/- \[x\] English/g)).toHaveLength(1);
   }
@@ -37,16 +39,16 @@ it('drains sequential offline edits after a cloud-only change without losing eit
  let remote={...base,deadline:'2026-10-01',revision:4};let note='';
  network.mockImplementation(async(options:{body?:string})=>{
   if(!options.body)return {status:200,json:{tasks:[remote]}};
-  const {task}=JSON.parse(options.body);
+  const {task}=JSON.parse(options.body) as {task:DailyTask};
   if(task.revision!==remote.revision)return {status:409,json:{error:'task_conflict'}};
   remote={...task,revision:remote.revision+1};return {status:200,json:{ok:true,task:remote}};
  });
  const plugin={manifest:{dir:'test'},settings:{cloudflareWorkerUrl:'https://example.test',cloudflareApiToken:'test'},
   dailyNotes:{getNote:()=>null,ensureNote:async()=>({})},app:{vault:{getAbstractFileByPath:()=>new TFile('Задания.md'),getMarkdownFiles:()=>[],read:async()=>note,adapter:{exists:async()=>true,read:async()=>stored,write:async(_:string,s:string)=>{stored=s;}},process:async(_:unknown,fn:(s:string)=>string)=>{note=fn(note);}}}} as unknown as HabitTimerPlugin;
  await new TasksService(plugin).sync();
- expect(JSON.parse(stored).pending).toHaveLength(0);
+ expect((JSON.parse(stored) as StoredState).pending).toHaveLength(0);
  expect(remote).toMatchObject({name:'Renamed',done:true,deadline:'2026-10-01',revision:6});
- expect(JSON.parse(stored).tasks[0]).toEqual(remote);
+ expect((JSON.parse(stored) as StoredState).tasks[0]).toEqual(remote);
  expect(note).toContain('- [x] Renamed');
 });
 
@@ -68,8 +70,8 @@ it('moves undated series to the registry, preserves unrelated notes, and project
   expect(contents.get('Daily/2026-09-11.md')).toContain('Friday class');
   contents.set('Daily/2026-09-11.md',contents.get('Daily/2026-09-11.md')!.replace('- [ ] Friday class','- [x] Friday class'));
   await service.list();await service.list();
-  expect(JSON.parse(stored).tasks[0].history).toHaveLength(1);
-  expect(JSON.parse(stored).tasks[0].date).toBe('2026-09-18');
-  expect(JSON.parse(stored).pending).toHaveLength(1);
+  expect((JSON.parse(stored) as StoredState).tasks[0]!.history).toHaveLength(1);
+  expect((JSON.parse(stored) as StoredState).tasks[0]!.date).toBe('2026-09-18');
+  expect((JSON.parse(stored) as StoredState).pending).toHaveLength(1);
  }finally{vi.useRealTimers();}
 });

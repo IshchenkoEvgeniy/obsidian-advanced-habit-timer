@@ -8,7 +8,8 @@ export class CloudflareCoverService {
     async available(): Promise<boolean> {
         try {
             const response = await requestUrl({ url: `${this.baseUrl}/api/covers/status`, headers: this.headers });
-            return response.json?.enabled === true;
+            const body = response.json as { enabled?: boolean } | undefined;
+            return body?.enabled === true;
         } catch { return false; }
     }
 

@@ -1,8 +1,8 @@
 import { App, moment } from 'obsidian';
-import { parseDuration, getDailyNotes, SESSION_ROW_REGEX, getObject, getString, getNumber } from './utils';
+import { parseDuration, getDailyNotes, SESSION_ROW_REGEX, getObject } from './utils';
 import { t } from './i18n';
 import type { Language } from './i18n';
-import type { HabitTimerSettings } from './types';
+import type { HabitTimerSettings, HabitProperty, MediaCollectionConfig } from './types';
 import type { Frontmatter } from './utils/frontmatter';
 import { readPropertyNumber, readPropertyString, readPropertyStrings } from './library/property-schema';
 import { evaluateHabitState, readHabitExplicitState, statePreservesStreak } from './habits/goals';
@@ -12,13 +12,15 @@ export interface Achievement {
     id: string; title: string; desc: string; icon: string; rank: number; count: number; repeatable: boolean;
 }
 
+type MomentInstance = ReturnType<typeof moment>;
+
 export class GamificationEngine {
     constructor(
         public app: App,
         public dailyNotesFolder: string,
-        public mediaCollections: any[],
+        public mediaCollections: MediaCollectionConfig[],
         public lang: string,
-        public properties: any[],
+        public properties: HabitProperty[],
         public settings: HabitTimerSettings
     ) {}
 
@@ -146,7 +148,7 @@ export class GamificationEngine {
 
         const sortedDates = Array.from(datesWithSessions).sort();
         let currentStreak = 0;
-        let prevDate: any = null;
+        let prevDate: MomentInstance | null = null;
 
         let count7 = 0;
         let count30 = 0;
@@ -243,7 +245,7 @@ export class GamificationEngine {
                 datesRead.sort();
                 
                 let bStreak = 0;
-                let bPrev: any = null;
+                let bPrev: MomentInstance | null = null;
                 for (const d of datesRead) {
                     const curr = moment(d, "YYYY-MM-DD");
                     if (!bPrev) { bStreak = 1; }
@@ -280,7 +282,7 @@ export class GamificationEngine {
         const globalPerc = (globalRemHours / 100) * 100;
 
         const globalCard = container.createDiv({ cls: "gami-global-card" });
-        globalCard.createDiv({ text: t(this.lang as any, 'global_level_title') || 'Global Level', cls: "gami-global-title" });
+        globalCard.createDiv({ text: t(this.lang as Language, 'global_level_title') || 'Global Level', cls: "gami-global-title" });
         globalCard.createDiv({ text: `Level ${globalLevel}`, cls: "gami-global-level" });
         
         const gBg = globalCard.createDiv({ cls: "gami-progress-bg" });

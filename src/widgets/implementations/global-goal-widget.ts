@@ -26,7 +26,6 @@ export class GlobalGoalWidget extends HabitWidget {
         let totalSec = 0;
         const last30Map = new Map<string, number>();
         const cutoff30 = moment().subtract(30, 'days').format('YYYY-MM-DD');
-        const todayStr = moment().format('YYYY-MM-DD');
 
         const dailyNotes = getDailyNotes(this.plugin.app, this.plugin.settings.dailyNotesFolder);
         for (const file of dailyNotes) {

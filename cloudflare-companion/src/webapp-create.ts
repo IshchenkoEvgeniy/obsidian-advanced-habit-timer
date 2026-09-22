@@ -24,7 +24,7 @@ export async function creationOptions(env: Env, profileId: string): Promise<Resp
   return json({ collections: [...new Set([...collections, ...existing.map(c => c.collection_id)])], authors, genres, series,
     recent: (recent.results || []).map(row => {
       let payload: Record<string, unknown> = {};
-      try { payload = JSON.parse(row.payload_json); } catch { /* Legacy malformed event. */ }
+      try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { /* Legacy malformed event. */ }
       return { type: row.event_type, title: row.habit_name || text(payload.text, 250), category: text(payload.category, 20),
         date: row.habit_date, synced: row.acknowledged_at !== null };
     }) });

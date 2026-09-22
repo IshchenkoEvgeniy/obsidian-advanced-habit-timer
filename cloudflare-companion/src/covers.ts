@@ -1,5 +1,5 @@
 export interface CoverBucket {
-  head(key: string): Promise<unknown | null>;
+  head(key: string): Promise<unknown>;
   get(key: string): Promise<{ body: ReadableStream; httpEtag: string } | null>;
   put(key: string, value: ArrayBuffer, options: { httpMetadata: { contentType: string } }): Promise<unknown>;
 }

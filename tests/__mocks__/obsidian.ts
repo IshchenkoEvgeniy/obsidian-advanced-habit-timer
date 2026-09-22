@@ -15,9 +15,9 @@ export class TFile {
     path: string;
     stat: { mtime: number; ctime: number; size: number };
 
-    constructor(path: string) {
-        this.path = path;
-        this.basename = path.split('/').pop()?.replace(/\.md$/, '') ?? path;
+    constructor(path?: string) {
+        this.path = path ?? '';
+        this.basename = path?.split('/').pop()?.replace(/\.md$/, '') ?? '';
         this.stat = { mtime: 0, ctime: 0, size: 0 };
     }
 }
@@ -37,7 +37,7 @@ export class App {}
 export class Modal { constructor(_app: App) {} }
 export class Notice { constructor(_msg: string) {} }
 export class Setting { constructor(_el: HTMLElement) {} }
-export class SuggestModal<T> { constructor(_app: App) {} }
+export class SuggestModal { constructor(_app: App) {} }
 export class ItemView {}
 export class MarkdownRenderer {}
 export class ButtonComponent {}

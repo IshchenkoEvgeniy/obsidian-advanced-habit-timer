@@ -4,6 +4,8 @@ import type {
 } from './types';
 import { syncBoard, recordProjectTime } from './project-board';
 import { recordSession } from './session-history';
+import type { DailyTask } from '../../src/tasks/model';
+import type { BoardTask } from './project-board';
 
 export async function getConfig(db: D1Database, profileId: string): Promise<CompanionConfigRow | null> {
   return db.prepare('SELECT * FROM companion_config WHERE profile_id = ?').bind(profileId).first<CompanionConfigRow>();
@@ -267,6 +269,17 @@ export async function getLibraryBySeries(db: D1Database, profileId: string, seri
   return (result.results || []).filter(item => item.series.toLocaleLowerCase() === normalized);
 }
 
+// Shape of session_history.data_json as written by recordSession().
+interface SessionDataJson {
+  media?: { id: number; title: string; item_path: string; unit: string; progress: number; total: number } | null;
+  task?: unknown;
+  startTime?: string;
+  endTime?: string;
+  targetSeconds?: number | null;
+  note?: string;
+  date?: string;
+}
+
 export async function setLibraryProgress(
   db: D1Database, profileId: string, id: number, progressValue: number, date: string,
   details: { delta?: number; note?: string; time?: string; season?: number; episode?: number; sessionId?: string } = {}
@@ -275,9 +288,9 @@ export async function setLibraryProgress(
   if (!item) return null;
   if(details.sessionId){
     const session=await db.prepare('SELECT data_json,result_json FROM session_history WHERE profile_id=? AND id=?').bind(profileId,details.sessionId).first<{data_json:string;result_json:string|null}>();
-    if(!session||JSON.parse(session.data_json).media?.id!==id)throw new Error('session_media_mismatch');
+    if(!session||(JSON.parse(session.data_json) as SessionDataJson).media?.id!==id)throw new Error('session_media_mismatch');
     if(session.result_json)return item;
-    const context=JSON.parse(session.data_json);
+    const context=JSON.parse(session.data_json) as SessionDataJson;
     date=context.date||date;
     details={...details,time:context.endTime||details.time};
   }
@@ -538,6 +551,9 @@ export async function resumeTimer(db: D1Database, profileId: string): Promise<Ti
   return { ...timer, timer_state: 'running', started_at: now };
 }
 
+// task_json stored on an active timer: a daily task (with key/kind markers, see daily-tasks.ts) or a board task.
+type StoredTimerTask = (DailyTask & { key: string; kind: 'daily' }) | (BoardTask & { kind?: undefined });
+
 export async function finishTimer(
   db: D1Database, profileId: string, date: string, endTime: string, capToTarget = false, note = ''
 ): Promise<{ timer: TimerRow; elapsed: number; sessionId: string } | null> {
@@ -547,7 +563,7 @@ export async function finishTimer(
   const measured = timerElapsed(timer);
   const elapsed = capToTarget && timer.target_seconds ? Math.min(measured, timer.target_seconds) : measured;
   const sessionId=await recordSession(db,profileId,timer,elapsed,'completed',note);
-  const linkedTask = timer.task_json ? JSON.parse(timer.task_json) : null;
+  const linkedTask = timer.task_json ? JSON.parse(timer.task_json) as StoredTimerTask : null;
   if (linkedTask?.kind === 'daily') {
     if(linkedTask.habitName)await db.prepare(`INSERT INTO habit_values(profile_id,habit_name,habit_date,value,state,updated_at) VALUES(?,?,?,?,NULL,?) ON CONFLICT(profile_id,habit_name,habit_date) DO UPDATE SET value=habit_values.value+excluded.value,state=NULL,updated_at=excluded.updated_at`)
       .bind(profileId,linkedTask.habitName,date,elapsed,Date.now()).run();
@@ -559,7 +575,7 @@ export async function finishTimer(
     startTime: timer.start_time,
     endTime,
     mode: 'Telegram',
-    note: note || (timer.task_json ? JSON.parse(timer.task_json).name : '-'),sessionId
+    note: note || (timer.task_json ? (JSON.parse(timer.task_json) as StoredTimerTask).name : '-'),sessionId
   });
   }
   return { timer: {...timer,session_id:sessionId}, elapsed, sessionId };

@@ -81,6 +81,6 @@ export function readTaskChecks(content:string, task:DailyTask):DailyTask {
     const lines=content.slice(start,end).split(/\r?\n/);
     const main=lines.find(l=>/^- \[[ xX]\] /.test(l));
     if(!main)return task;
-    const subtasks=lines.filter(l=>/^  - \[[ xX]\] /.test(l)).map((l,i)=>{const date=l.match(/ \[date:: (\d{4}-\d{2}-\d{2})\]$/);return {...task.subtasks[i],text:date?l.slice(8,-date[0].length):l.slice(8),...(date?{date:date[1]}:{}),checked:l[5]?.toLowerCase()==='x'};});
+    const subtasks=lines.filter(l=>/^ {2}- \[[ xX]\] /.test(l)).map((l,i)=>{const date=l.match(/ \[date:: (\d{4}-\d{2}-\d{2})\]$/);return {...task.subtasks[i],text:date?l.slice(8,-date[0].length):l.slice(8),...(date?{date:date[1]}:{}),checked:l[5]?.toLowerCase()==='x'};});
     return {...task,name:main.slice(6),done:main[3]?.toLowerCase()==='x',subtasks};
 }

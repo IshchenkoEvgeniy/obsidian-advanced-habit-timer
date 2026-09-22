@@ -116,7 +116,7 @@ export class CalendarHeatmapWidget extends HabitWidget {
 
                 cell.onclick = () => {
                     // Navigate to stats detail for this day
-                    (this.plugin as any).activateView('habit-timer-stats-view');
+                    void this.plugin.activateView('habit-timer-stats-view');
                 };
             });
         });

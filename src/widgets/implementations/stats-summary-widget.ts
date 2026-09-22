@@ -1,6 +1,6 @@
 import { moment } from 'obsidian';
 import { HabitWidget } from '../types';
-import { getDailyNotes, parseDuration } from '../../utils';
+import { getDailyNotes } from '../../utils';
 import { getHabitValueFromFrontmatter } from '../../services/habit-service';
 
 /**
@@ -79,7 +79,7 @@ export class StatsSummaryWidget extends HabitWidget {
         // tap → stats view
         this.container.setCssStyles({ cursor: 'pointer' });
         this.container.onclick = () => {
-            (this.plugin as any).activateView('habit-timer-stats-view');
+            void this.plugin.activateView('habit-timer-stats-view');
         };
     }
 

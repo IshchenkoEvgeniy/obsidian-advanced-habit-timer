@@ -1,6 +1,6 @@
 import { moment } from 'obsidian';
 import { HabitWidget } from '../types';
-import { parseDuration, formatDuration } from '../../utils';
+import { formatDuration } from '../../utils';
 
 /**
  * Widget 4 — Live Timer (default 2×1)
@@ -34,7 +34,7 @@ export class LiveTimerWidget extends HabitWidget {
 
         // Header row
         const header = this.container.createDiv({ cls: 'ht-lt-header' });
-        const dot = header.createDiv({ cls: 'ht-lt-live-dot' });
+        header.createDiv({ cls: 'ht-lt-live-dot' });
         const titleWrap = header.createDiv({ cls: 'ht-lt-title-wrap' });
         titleWrap.createDiv({
             cls: 'ht-lt-habit-name',
@@ -56,7 +56,7 @@ export class LiveTimerWidget extends HabitWidget {
         pb.setCssStyles({ width: `${Math.round(perc * 100)}%` });
         if (perc >= 1) pb.addClass('ht-lt-progress-done');
 
-        const label = pbWrap.createDiv({
+        pbWrap.createDiv({
             cls: 'ht-lt-progress-label',
             text: `${Math.floor(elapsed / 60)}м / ${Math.floor(totalGoalSec / 60)}м`,
         });
@@ -75,7 +75,7 @@ export class LiveTimerWidget extends HabitWidget {
         idle.createDiv({ cls: 'ht-lt-idle-icon', text: '⏱️' });
         idle.createDiv({ cls: 'ht-lt-idle-text', text: 'Нет активной сессии' });
         const btn = idle.createEl('button', { cls: 'ht-lt-btn ht-lt-btn-start', text: '▶ Начать' });
-        btn.onclick = () => void (this.plugin as any).activateView('habit-timer-view');
+        btn.onclick = () => void this.plugin.activateView('habit-timer-view');
     }
 
     private _startTick(): void {

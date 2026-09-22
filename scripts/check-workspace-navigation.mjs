@@ -1,3 +1,5 @@
+/* global WorkspaceNav */
+
 import {build} from 'esbuild';
 import {readFile,mkdir} from 'node:fs/promises';
 import {createRequire} from 'node:module';

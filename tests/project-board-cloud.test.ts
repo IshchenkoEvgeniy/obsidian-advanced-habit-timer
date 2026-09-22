@@ -8,6 +8,9 @@ import { sessionHistoryApi } from '../cloudflare-companion/src/session-history';
 import { dailyTasksApi } from '../cloudflare-companion/src/daily-tasks';
 import type { BoardTask } from '../cloudflare-companion/src/project-board';
 import type { D1Database, Env, CompanionConfigRow } from '../cloudflare-companion/src/types';
+// Shapes of API/JSON.parse answers used by the tests below
+interface SessionHistoryItem{id:string,legacy:number,data:{note:string}}
+interface SessionHistoryResponse{items:SessionHistoryItem[]}
 
 function database(){
  const sql=new DatabaseSync(':memory:');
@@ -55,7 +58,7 @@ describe('Cloud project board',()=>{
   await pauseTimer(db,'p');await resumeTimer(db,'p');expect((await getTimer(db,'p'))!.original_started_at).toBe(original);
   const finished=await finishTimer(db,'p','2026-09-06','12:01',false,'Worked on prototype');
   const response=await sessionHistoryApi(new Request('https://example.com/app/api/sessions'),{DB:db} as Env,'p');
-  const history=await response.json();expect(history.items).toHaveLength(2);expect(history.items.find((s:{id:string})=>s.id===finished!.sessionId).data.note).toBe('Worked on prototype');
+  const history=await response.json() as SessionHistoryResponse;expect(history.items).toHaveLength(2);expect(history.items.find((s:{id:string})=>s.id===finished!.sessionId).data.note).toBe('Worked on prototype');
   expect(history.items.filter((s:{legacy:number})=>s.legacy)).toHaveLength(1);sql.close();
  });
  it('records a media result once and rejects attribution to another work',async()=>{
@@ -66,7 +69,7 @@ describe('Cloud project board',()=>{
   await setLibraryProgress(db,'p',id,10,'2026-09-07',{sessionId:finished!.sessionId,note:'Chapter one'});
   await setLibraryProgress(db,'p',id,20,'2026-09-07',{sessionId:finished!.sessionId});
   expect(sql.prepare('SELECT progress FROM library_items WHERE id=?').get(id)!.progress).toBe(10);
-  const result=JSON.parse(sql.prepare('SELECT result_json FROM session_history').get()!.result_json as string);expect(result.delta).toBe(10);expect(result.note).toBe('Chapter one');
+  const result=JSON.parse(sql.prepare('SELECT result_json FROM session_history').get()!.result_json as string) as {delta:number,note:string};expect(result.delta).toBe(10);expect(result.note).toBe('Chapter one');
   await expect(setLibraryProgress(db,'p',other,5,'2026-09-07',{sessionId:finished!.sessionId})).rejects.toThrow('session_media_mismatch');sql.close();
  });
  it('keeps cancelled sessions in history without crediting the habit',async()=>{
@@ -79,7 +82,7 @@ describe('Cloud project board',()=>{
   expect((await boardApi(request(change),env,'p',config)).status).toBe(200);
   await syncBoard(db,'p',[task],scopes);
   let row=sql.prepare('SELECT * FROM project_documents').get()!;
-  expect(JSON.parse(row.data_json as string).status).toBe('Doing');
+  expect((JSON.parse(row.data_json as string) as {status:string}).status).toBe('Doing');
   expect((await boardApi(request({...change,requestId:crypto.randomUUID()}),env,'p',config)).status).toBe(409);
   expect((await boardApi(request(change),env,'p',config)).status).toBe(200);
   expect(sql.prepare('SELECT count(*) AS n FROM companion_events').get()!.n).toBe(1);
@@ -111,7 +114,7 @@ describe('Cloud project board',()=>{
   expect((await boardApi(request({action:'start',key:task.key}),env,'p',config)).status).toBe(200);
   sql.prepare('UPDATE active_timers SET started_at=?').run(Date.now()-65000);
   const result=await finishTimer(db,'p','2026-09-06','12:00');expect(result!.elapsed).toBeGreaterThanOrEqual(65);
-  expect(JSON.parse(sql.prepare('SELECT data_json FROM project_documents').get()!.data_json as string).timeSpentSec).toBe(result!.elapsed);
+  expect((JSON.parse(sql.prepare('SELECT data_json FROM project_documents').get()!.data_json as string) as {timeSpentSec:number}).timeSpentSec).toBe(result!.elapsed);
   expect(sql.prepare('SELECT value FROM habit_values').get()!.value).toBe(result!.elapsed);
   expect(sql.prepare("SELECT * FROM companion_events WHERE event_type='project_timer'").all()).toHaveLength(1);sql.close();
  });

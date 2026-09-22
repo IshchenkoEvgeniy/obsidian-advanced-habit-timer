@@ -27,7 +27,7 @@ describe('cover storage', () => {
         const response = await handleCoverRequest(new Request(`https://example.com/api/covers/${digest}`, { method: 'POST', body: bytes }), storage);
         expect(response.status).toBe(200);
         expect(storage.put).not.toHaveBeenCalled();
-        expect((await response.json()).url).toBe(`https://example.com/covers/${digest}`);
+        expect((await response.json() as {url:string}).url).toBe(`https://example.com/covers/${digest}`);
     });
     it('uploads a new content-addressed cover', async () => {
         const bytes = new TextEncoder().encode('RIFF0000WEBP');

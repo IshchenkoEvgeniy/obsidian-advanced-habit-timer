@@ -132,7 +132,7 @@ describe('dashboard API contract', () => {
         vi.advanceTimersByTime(151);
 
         expect(changed).toHaveBeenCalledTimes(1);
-        expect(changed.mock.calls[0]?.[0].domains).toEqual(['projects', 'library']);
+        expect((changed.mock.calls[0]?.[0] as { domains: string[] }).domains).toEqual(['projects', 'library']);
 
         bridge.stop();
         expect(unavailable).toHaveBeenCalledWith(1);

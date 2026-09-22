@@ -19,11 +19,11 @@ import { mount, unmount } from 'svelte';
 import TimerApp from '../components/timer/TimerApp.svelte';
 import Heatmap from '../components/charts/Heatmap.svelte';
 import { get } from 'svelte/store';
-import { 
-    timerSeconds, timerMode, isRunning, sessionStartTime, 
+import {
+    timerSeconds, timerMode, sessionStartTime,
     selectedHabit, selectedSubTask, selectedBook, sessionNote,
     activeProjectTaskFile, activeProjectTaskName, isSingleFileTask,
-    pastHistory, baseSecondsToday, activeTab
+    pastHistory, baseSecondsToday
 } from '../store/TimerStore';
 
 export const VIEW_TYPE_TIMER = "habit-timer-view";
@@ -32,13 +32,13 @@ export class TimerView extends ItemView {
     plugin: HabitTimerPlugin;
     musicPlayer: MusicPlayer;
     engine: TimerEngine;
-    svelteApp: any;
+    svelteApp: Record<string, unknown> | null;
 
     private lastHeatmapKey: string = '';
-    private heatmapControlsApp: any;
-    private heatmapApp: any;
+    private heatmapControlsApp: Record<string, unknown> | null;
+    private heatmapApp: Record<string, unknown> | null;
     private isSaving = false;
-    onRefreshCallbacks: ((fm: any) => Promise<void>)[] = [];
+    onRefreshCallbacks: ((fm: Record<string, unknown>) => Promise<void>)[] = [];
 
     constructor(leaf: WorkspaceLeaf, plugin: HabitTimerPlugin) {
         super(leaf);
@@ -59,9 +59,9 @@ export class TimerView extends ItemView {
 
     async onClose() {
         // Unmount all Svelte components to prevent memory leaks
-        if (this.svelteApp) { try { await unmount(this.svelteApp); } catch (e) { /* ignore */ } this.svelteApp = null; }
-        if (this.heatmapApp) { try { await unmount(this.heatmapApp); } catch (e) { /* ignore */ } this.heatmapApp = null; }
-        if (this.heatmapControlsApp) { try { await unmount(this.heatmapControlsApp); } catch (e) { /* ignore */ } this.heatmapControlsApp = null; }
+        if (this.svelteApp) { try { await unmount(this.svelteApp); } catch { /* ignore */ } this.svelteApp = null; }
+        if (this.heatmapApp) { try { await unmount(this.heatmapApp); } catch { /* ignore */ } this.heatmapApp = null; }
+        if (this.heatmapControlsApp) { try { await unmount(this.heatmapControlsApp); } catch { /* ignore */ } this.heatmapControlsApp = null; }
         // Stop the tick interval but do NOT reset the timer state —
         // recoverActiveTimer() will resume it when the view is re-opened
         this.engine.suspend();
@@ -74,7 +74,7 @@ export class TimerView extends ItemView {
         container.addClass('habit-timer-view-container');
 
         if (this.svelteApp) {
-            try { await unmount(this.svelteApp); } catch (e) { /* ignore */ }
+            try { await unmount(this.svelteApp); } catch { /* ignore */ }
         }
 
         try {
@@ -86,9 +86,10 @@ export class TimerView extends ItemView {
                     view: this
                 }
             });
-        } catch (e: any) {
-            new Notice("TimerApp mount error: " + e.message, 10000);
-            container.createEl("div", { text: "Error loading timer: " + e.stack, attr: { style: 'color: red; padding: 20px; white-space: pre-wrap;' }});
+        } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            new Notice("TimerApp mount error: " + err.message, 10000);
+            container.createEl("div", { text: "Error loading timer: " + err.stack, attr: { style: 'color: red; padding: 20px; white-space: pre-wrap;' }});
         }
 
         await this.refresh();
@@ -161,8 +162,8 @@ export class TimerView extends ItemView {
         if (heatmapKey === this.lastHeatmapKey) return;
         this.lastHeatmapKey = heatmapKey;
 
-        if (this.heatmapControlsApp) { try { void unmount(this.heatmapControlsApp); } catch (e) { /* ignore */ } }
-        if (this.heatmapApp) { try { void unmount(this.heatmapApp); } catch (e) { /* ignore */ } }
+        if (this.heatmapControlsApp) { try { void unmount(this.heatmapControlsApp); } catch { /* ignore */ } }
+        if (this.heatmapApp) { try { void unmount(this.heatmapApp); } catch { /* ignore */ } }
 
         container.empty();
         const hmHead = container.createDiv({ cls: "heatmap-timer-header", attr: { style: "display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;" } });
@@ -216,7 +217,7 @@ export class TimerView extends ItemView {
                 f = await this.app.vault.create(path, "---\n---\n");
             }
             if (f instanceof TFile) {
-                await this.app.fileManager.processFrontMatter(f, (frontmatter: any) => {
+                await this.app.fileManager.processFrontMatter(f, (frontmatter) => {
                     const fm = frontmatter as Record<string, unknown>;
                     this.plugin.settings.properties.forEach(p => {
                         const t = p.type || 'timer';

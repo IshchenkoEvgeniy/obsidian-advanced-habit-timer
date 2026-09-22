@@ -4,11 +4,18 @@ import type HabitTimerPlugin from '../main';
 import SettingsSvelte from '../components/Settings.svelte';
 import { mount } from 'svelte';
 import { DEFAULT_LIBRARY_PROPERTY_ALIASES } from '../types';
-import type { LibraryPropertyField, WeekdayKey } from '../types';
+import type { HabitProperty, LibraryPropertyField, WeekdayKey } from '../types';
+import type { Language } from '../i18n';
+
+interface TelegramChatInfo { id?: string | number; }
+interface TelegramMessageInfo { chat?: TelegramChatInfo; }
+interface TelegramUpdateInfo { message?: TelegramMessageInfo; }
+interface TelegramGetUpdatesResponse { ok?: boolean; result: TelegramUpdateInfo[]; }
+interface TelegramSendResponse { ok?: boolean; description?: string; }
 
 export class HabitTimerSettingTab extends PluginSettingTab {
     plugin: HabitTimerPlugin;
-    svelteComponent: any;
+    svelteComponent: unknown;
 
     constructor(app: App, plugin: HabitTimerPlugin) {
         super(app, plugin);
@@ -29,7 +36,7 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                 .addOption('ru', 'Русский')
                 .setValue(lang)
                 .onChange(async (val) => {
-                    this.plugin.settings.language = val as any;
+                    this.plugin.settings.language = val as Language;
                     await this.plugin.saveSettings();
                     this.display();
                 }));
@@ -411,12 +418,12 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                 if (!token) { new Notice('Please enter Bot Token first!'); return; }
                 try {
                     const resp = await requestUrl({ url: `https://api.telegram.org/bot${token}/getUpdates`, method: 'GET' });
-                    const data = resp.json;
+                    const data = resp.json as TelegramGetUpdatesResponse;
                     if (data?.ok && data.result?.length > 0) {
                         let foundId = '';
                         for (let idx = data.result.length - 1; idx >= 0; idx--) {
                             const item = data.result[idx];
-                            if (item.message?.chat?.id) { foundId = String(item.message.chat.id); break; }
+                            if (item?.message?.chat?.id) { foundId = String(item.message.chat.id); break; }
                         }
                         if (foundId) {
                             this.plugin.settings.telegramChatId = foundId;
@@ -426,7 +433,7 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                             this.display();
                         } else { new Notice(t(lang, 'telegram_get_chat_id_notice_err')); }
                     } else { new Notice(t(lang, 'telegram_get_chat_id_notice_err')); }
-                } catch (e: any) { console.error(e); new Notice('Error: ' + (e).message); }
+                } catch (e) { console.error(e); new Notice('Error: ' + (e instanceof Error ? e.message : String(e))); }
             }));
 
         if (cloudflareMode) {
@@ -478,9 +485,10 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ chat_id: chatId, text: '🤖 Obsidian Habit Timer: ' + t(lang, 'telegram_test_success') })
                     });
-                    if (res.json?.ok) { new Notice(t(lang, 'telegram_test_success')); }
-                    else { new Notice('Failed: ' + (res.json?.description || 'Unknown error')); }
-                } catch (e: any) { console.error(e); new Notice('Error: ' + (e).message); }
+                    const sentJson = res.json as TelegramSendResponse;
+                    if (sentJson?.ok) { new Notice(t(lang, 'telegram_test_success')); }
+                    else { new Notice('Failed: ' + (sentJson?.description || 'Unknown error')); }
+                } catch (e) { console.error(e); new Notice('Error: ' + (e instanceof Error ? e.message : String(e))); }
             }));
 
         // --- Habits ---
@@ -517,7 +525,7 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                 .addOption('negative', t(lang, 'type_negative'))
                 .setValue(type)
                 .onChange(async (val) => {
-                    p.type = val as any;
+                    p.type = val as HabitProperty['type'];
                     await this.plugin.saveSettings();
                     this.display();
                 }));

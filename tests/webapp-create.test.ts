@@ -8,6 +8,9 @@ vi.mock('../cloudflare-companion/src/db', () => ({
 }));
 import { findLibraryDuplicate } from '../cloudflare-companion/src/db';
 
+// Shape of the event payload JSON bound as the 6th SQL parameter in webapp-create
+interface EventPayload{category?:string,text?:string,authors?:string[],unit?:string,seriesIndex?:number,total?:number}
+
 describe('Mini App creation events', () => {
     const config = { timezone: 'Europe/Kyiv' } as CompanionConfigRow;
     const requestId = '12345678-1234-1234-1234-123456789012';
@@ -24,7 +27,7 @@ describe('Mini App creation events', () => {
         const response = await createFromWebApp(request({ category: 'link', text: 'Прочитать позже', url: 'https://example.com/article' }), env, 'default', config, 'capture');
         expect(response.status).toBe(200);
         expect(run).toHaveBeenCalledOnce();
-        const payload = JSON.parse(bind.mock.calls.at(-1)![5] as unknown as string);
+        const payload = JSON.parse(bind.mock.calls.at(-1)![5] as unknown as string) as EventPayload;
         expect(payload.category).toBe('link');
         expect(payload.text).toBe('Прочитать позже\nhttps://example.com/article');
     });
@@ -44,7 +47,7 @@ describe('Mini App creation events', () => {
         const response = await createFromWebApp(request({ title: 'Book', collectionId: 'book', authors: 'A, B, A', genres: ['Novel'],
             total: '120', series: 'Series', seriesIndex: '', format: 'Audiobook', unit: 'pages' }), env, 'default', config, 'library_create');
         expect(response.status).toBe(200);
-        const payload = JSON.parse(bind.mock.calls.at(-1)![5] as unknown as string);
+        const payload = JSON.parse(bind.mock.calls.at(-1)![5] as unknown as string) as EventPayload;
         expect(payload).toMatchObject({ authors: ['A', 'B'], unit: 'minutes', seriesIndex: 4, total: 120 });
     });
     it('requires explicit confirmation for duplicates', async () => {

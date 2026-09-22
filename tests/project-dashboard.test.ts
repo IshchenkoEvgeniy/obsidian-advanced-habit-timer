@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { TFile } from 'obsidian';
+import { TFile } from 'obsidian';
 import { calculateProjectDashboard } from '../src/projects/dashboard-metrics';
 import type { ProjectTask } from '../src/projects/types';
 
 function task(id: string, changes: Partial<ProjectTask> = {}): ProjectTask {
     return {
         id,
-        file: { path: `Projects/${id}.md` } as TFile,
+        file: new TFile(`Projects/${id}.md`),
         name: id,
         status: 'To Do',
         timeSpentSec: 0,

@@ -7,7 +7,7 @@ function legacyString(value: unknown): string | undefined {
     return undefined;
 }
 
-export async function migrateLegacySettings(plugin: HabitTimerPlugin, loadedData: any) {
+export async function migrateLegacySettings(plugin: HabitTimerPlugin, loadedData: unknown) {
     if (!loadedData || typeof loadedData !== 'object') return;
     const ld = loadedData as Record<string, unknown>;
     

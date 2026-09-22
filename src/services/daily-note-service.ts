@@ -47,7 +47,7 @@ export class DailyNoteService {
     async ensureProperties(date: string = moment().format('YYYY-MM-DD')): Promise<void> {
         const file = await this.ensureNote(date);
         if (!file) return;
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             for (const prop of this.plugin.settings.properties) {
                 if (fm[prop.name] === undefined) {
                     if (prop.type === 'timer') fm[prop.name] = "00:00:00";
@@ -65,7 +65,7 @@ export class DailyNoteService {
             new Notice("Daily note not found! Please create it first.");
             return;
         }
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             fm[habitName] = !fm[habitName];
         });
     }
@@ -116,7 +116,7 @@ export class DailyNoteService {
             return;
         }
         const key = `${habitName}-Relapse`;
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             fm[key] = !fm[key];
         });
     }
@@ -128,7 +128,7 @@ export class DailyNoteService {
             new Notice("Daily note not found! Please create it first.");
             return;
         }
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             const current = Number(fm[habitName]) || 0;
             fm[habitName] = Math.max(0, current + delta);
         });
@@ -141,7 +141,7 @@ export class DailyNoteService {
             new Notice('Daily note not found! Please create it first.');
             return;
         }
-        await this.app.fileManager.processFrontMatter(file, fm => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             const current = parseDuration(fm[habitName]);
             fm[habitName] = formatDuration(Math.max(0, current + seconds));
         });
@@ -179,7 +179,7 @@ export class DailyNoteService {
             new Notice('Daily note not found! Please create it first.');
             return;
         }
-        await this.app.fileManager.processFrontMatter(file, fm => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             const stateKey = getHabitStateKey(habitName);
             const deferredToKey = getHabitDeferredToKey(habitName);
             const deferredAmountKey = getHabitDeferredAmountKey(habitName);

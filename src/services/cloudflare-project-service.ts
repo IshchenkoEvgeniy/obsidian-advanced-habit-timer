@@ -6,6 +6,7 @@ import { projectTaskId } from '../projects/types';
 import type { ProjectTask } from '../projects/types';
 import { findTaskBlockEnd } from '../projects/engine/task-block';
 import { parseDuration } from '../utils';
+import type { Frontmatter } from '../utils/frontmatter';
 
 export class CloudflareProjectService {
  constructor(private plugin:HabitTimerPlugin){}
@@ -60,14 +61,14 @@ export class CloudflareProjectService {
    if(single){
     await this.plugin.app.vault.process(task.file,content=>{
      const lines=content.split('\n');
-     const index=task!.blockId?lines.findIndex(line=>line.trimEnd().endsWith(` ^${task!.blockId}`)):task!.sourceLine??-1;
+     const index=task.blockId?lines.findIndex(line=>line.trimEnd().endsWith(` ^${task.blockId}`)):task.sourceLine??-1;
      if(index<0||!lines[index])throw new Error('Task block missing');
-     const current=lines[index]!.match(/⏱️\s*(\d+:\d+(?::\d+)?)/)?.[1]||'00:00:00';
+     const current=lines[index].match(/⏱️\s*(\d+:\d+(?::\d+)?)/)?.[1]||'00:00:00';
      const tag=`⏱️ ${this.plugin.formatTime(parseDuration(current)+seconds)}`;
-     lines[index]=/⏱️\s*\d+:\d+(?::\d+)?/.test(lines[index]!)?lines[index]!.replace(/⏱️\s*\d+:\d+(?::\d+)?/,tag):lines[index]!.replace(/(\s+\^[\w-]+)?$/,` ${tag}$1`);
+     lines[index]=/⏱️\s*\d+:\d+(?::\d+)?/.test(lines[index])?lines[index].replace(/⏱️\s*\d+:\d+(?::\d+)?/,tag):lines[index].replace(/(\s+\^[\w-]+)?$/,` ${tag}$1`);
      return lines.join('\n');
     });
-   }else await this.plugin.app.fileManager.processFrontMatter(task.file,fm=>{fm.time_spent=this.plugin.formatTime(parseDuration(fm.time_spent||'00:00:00')+seconds);});
+   }else await this.plugin.app.fileManager.processFrontMatter(task.file,(fm:Frontmatter)=>{fm.time_spent=this.plugin.formatTime(parseDuration(fm.time_spent||'00:00:00')+seconds);});
   }else{
    if(!single&&incoming.name!==task.name){
     const destination=`${task.file.parent?.path}/${incoming.name}.md`;

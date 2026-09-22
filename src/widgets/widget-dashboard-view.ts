@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, moment } from 'obsidian';
+import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type HabitTimerPlugin from '../main';
 import { HabitWidget } from './types';
 import type { WidgetInstance, WidgetLayout } from './types';
@@ -308,17 +308,17 @@ export class WidgetDashboardView extends ItemView {
     // ─── Settings I/O ─────────────────────────────────────────────────────────
 
     private _getLayout(): WidgetLayout {
-        if (!(this.plugin.settings as any).widgetLayout) {
-            (this.plugin.settings as any).widgetLayout = {
+        if (!this.plugin.settings.widgetLayout) {
+            this.plugin.settings.widgetLayout = {
                 widgets: [],
                 refreshIntervalSec: 30,
             };
         }
-        return (this.plugin.settings as any).widgetLayout as WidgetLayout;
+        return this.plugin.settings.widgetLayout;
     }
 
     private async _saveLayout(layout: WidgetLayout) {
-        (this.plugin.settings as any).widgetLayout = layout;
+        this.plugin.settings.widgetLayout = layout;
         await this.plugin.saveSettings();
     }
 }

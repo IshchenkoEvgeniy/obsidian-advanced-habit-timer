@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, TFolder } from 'obsidian';
 import { t } from '../i18n';
 import type HabitTimerPlugin from '../main';
 
@@ -58,9 +58,9 @@ export class MusicPlayer {
         
         if (this.plugin.settings.globalMusicFolder) {
             const root = this.app.vault.getAbstractFileByPath(this.plugin.settings.globalMusicFolder);
-            if (root && 'children' in root) {
-                (root as any).children.forEach((c: any) => {
-                    if (c.children) {
+            if (root instanceof TFolder) {
+                root.children.forEach((c) => {
+                    if (c instanceof TFolder) {
                         sourceDropdown.createEl('option', { text: `📁 ${c.name}`, value: `folder:${c.name}` });
                     }
                 });

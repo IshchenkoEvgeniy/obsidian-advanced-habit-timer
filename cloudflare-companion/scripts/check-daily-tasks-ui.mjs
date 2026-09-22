@@ -1,3 +1,5 @@
+/* global loadDailyTasks */
+
 import {createRequire} from 'node:module';
 import {build} from 'esbuild';
 import {mkdir} from 'node:fs/promises';

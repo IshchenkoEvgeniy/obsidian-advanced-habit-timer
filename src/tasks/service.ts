@@ -2,7 +2,7 @@ import { moment, requestUrl, TFile, normalizePath } from 'obsidian';
 import type HabitTimerPlugin from '../main';
 import { putTask, taskLog, validTask, validTaskTimeRange, readTaskChecks, type DailyTask } from './model';
 import { upsertSessionLog } from '../services/session-log';
-import { formatDuration, parseDuration } from '../utils';
+import { formatDuration, getArray, parseDuration } from '../utils';
 import { rebaseTask } from './merge';
 import { completeTask, occurrenceDates,taskIsOverdue } from './planning';
 import { generateHabitTasks } from './habit-tasks';
@@ -11,13 +11,15 @@ import { getHabitValueFromFrontmatter } from '../services/habit-service';
 
 interface Operation { task: DailyTask; previous?: DailyTask; requestId: string; date: string }
 interface TaskState { tasks: DailyTask[]; pending: Operation[]; storageVersion?:number; conflicts?:Record<string,DailyTask>; active?: {task:DailyTask;started:number;id:string}; }
+/** Response of the companion `/api/tasks` endpoint. */
+interface TasksSyncResponse { error?: string; task?: DailyTask; tasks?: DailyTask[] }
 export class TasksService {
     private chain: Promise<unknown> = Promise.resolve();
     constructor(private plugin: HabitTimerPlugin) {}
     private get path() { return `${this.plugin.manifest.dir}/daily-tasks.json`; }
     private async read(): Promise<TaskState> {
         if (!await this.plugin.app.vault.adapter.exists(this.path)) return { tasks: [], pending: [] };
-        return JSON.parse(await this.plugin.app.vault.adapter.read(this.path));
+        return JSON.parse(await this.plugin.app.vault.adapter.read(this.path)) as TaskState;
     }
     private async write(state: TaskState) { await this.plugin.app.vault.adapter.write(this.path, JSON.stringify(state, null, 2)); }
     private lock<T>(fn: () => Promise<T>): Promise<T> {
@@ -109,8 +111,8 @@ export class TasksService {
         const file=await this.plugin.dailyNotes.ensureNote(date);if(!file)throw new Error('Дневная заметка недоступна');
         const marker=`<!-- task-session:${id} -->`,cell=(s:string)=>s.replace(/[\r\n|]/g,' ');
         await this.plugin.app.vault.process(file,c=>c.includes(marker)?c:taskLog(upsertSessionLog(c,`| ${cell(startTime)} - ${cell(endTime)} | Timer | ${cell(task.habitName||'Задания')} | ${formatDuration(seconds)} | - | ${cell(task.name)}: ${cell(note)} ${marker} |`),id,`Сессия: ${task.name}, ${formatDuration(seconds)}${note?' · '+note:''}`));
-        if(task.habitName)await this.plugin.app.fileManager.processFrontMatter(file,fm=>{
-            const ids=Array.isArray(fm['Task-Session-IDs'])?fm['Task-Session-IDs']:[];
+        if(task.habitName)await this.plugin.app.fileManager.processFrontMatter(file,(fm:Record<string,unknown>)=>{
+            const ids=getArray(fm['Task-Session-IDs']);
             if(ids.includes(id))return;
             fm[task.habitName]=formatDuration(parseDuration(fm[task.habitName])+seconds);
             fm['Task-Session-IDs']=[...ids,id];
@@ -175,14 +177,15 @@ export class TasksService {
             const settings = this.plugin.settings;
             if (!settings.cloudflareWorkerUrl || !settings.cloudflareApiToken) return;
             const workerUrl=settings.cloudflareWorkerUrl;
-            const request = async (body?: unknown) => {
+            const request = async (body?: unknown): Promise<TasksSyncResponse> => {
                 const result = await requestUrl({url:workerUrl.replace(/\/$/,'')+'/api/tasks',method:body?'POST':'GET',headers:{Authorization:`Bearer ${settings.cloudflareApiToken}`,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,throw:false});
-                if (result.status !== 200) throw new Error(result.json?.error === 'task_conflict' ? 'task_conflict' : `Синхронизация заданий: HTTP ${result.status}`);
-                return result.json;
+                const payload = result.json as TasksSyncResponse | undefined;
+                if (result.status !== 200) throw new Error(payload?.error === 'task_conflict' ? 'task_conflict' : `Синхронизация заданий: HTTP ${result.status}`);
+                return result.json as TasksSyncResponse;
             };
             while (state.pending.length) {
                 const op = state.pending[0]!;
-                let result;
+                let result: TasksSyncResponse | undefined;
                 for(let attempt=0;attempt<3;attempt++){
                     try { result=await request({task:op.task,requestId:op.requestId,confirm:op.task.deleted});break; }
                     catch(error){
@@ -197,7 +200,7 @@ export class TasksService {
                     }
                 }
                 // Old server versions acknowledge retries without returning the accepted task.
-                const accepted:DailyTask=result.task || ((await request()).tasks as DailyTask[]).find(t=>t.id===op.task.id);
+                const accepted:DailyTask|undefined=result!.task || ((await request()).tasks as DailyTask[]).find(t=>t.id===op.task.id);
                 if(!accepted)throw new Error('Сервер не подтвердил версию задания');
                 state.pending.shift();
                 if(state.conflicts)delete state.conflicts[op.task.id];
