@@ -1,5 +1,6 @@
 <script lang="ts">
-    import type { App } from 'obsidian';
+    import { setIcon, type App } from 'obsidian';
+    import type { Action } from 'svelte/action';
     import type HabitTimerPlugin from '../../main';
     import type { ProjectsView } from '../../projects-view';
     import type { ViewContext } from '../../projects/views/base-view';
@@ -13,11 +14,25 @@
     import ProjectDashboard from './ProjectDashboard.svelte';
     import ProjectGallery from './ProjectGallery.svelte';
     import ProjectTable from './ProjectTable.svelte';
-    import VanillaViewWrapper from './VanillaViewWrapper.svelte';
+    import ProjectTimeline from './ProjectTimeline.svelte';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
     export let view: ProjectsView;
+
+    const icon: Action<HTMLElement, string> = (node, name) => {
+        setIcon(node, name);
+        return { update(next) { setIcon(node, next); } };
+    };
+
+    const tabs = [
+        { id: 'board', icon: 'square-kanban', label: 'kanban_board' },
+        { id: 'table', icon: 'table-2', label: 'table_view' },
+        { id: 'calendar', icon: 'calendar-days', label: 'calendar_view' },
+        { id: 'dashboard', icon: 'layout-dashboard', label: 'dashboard_view' },
+        { id: 'gallery', icon: 'images', label: 'gallery_view' },
+        { id: 'timeline', icon: 'calendar-range', label: 'timeline_view' }
+    ] as const;
 
     let bulkStatus = '';
 
@@ -46,70 +61,98 @@
         await view.changeSelectedStatus(bulkStatus);
         bulkStatus = '';
     }
+
+    function openSettings(): void {
+        const setting = (app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+        if (!setting) return;
+        setting.open();
+        setting.openTabById(plugin.manifest.id);
+    }
 </script>
 
 <div class="projects-app">
     {#if $scopesWithStats.length}
-        <nav class="scope-switcher" aria-label={lang === 'ru' ? 'Области проектов' : 'Project scopes'}>
-            {#each $scopesWithStats as scope}
+        <nav class="scopes" aria-label={t(lang, 'projects_scopes_aria')}>
+            {#each $scopesWithStats as scope (scope.id)}
                 <button
+                    class="scope-card"
                     class:active={$activeScopeId === scope.id}
-                    style:border-color={scope.color || 'var(--background-modifier-border)'}
+                    style={`--scope-color:${scope.color || 'var(--interactive-accent)'}`}
+                    aria-pressed={$activeScopeId === scope.id}
                     on:click={() => void view.setActiveScope(scope.id)}
                 >
-                    <span>{scope.name}</span>
-                    <small>{scope.done}/{scope.total}</small>
-                    <span class="scope-progress"><span style:width={`${scope.pct}%`}></span></span>
+                    <span class="scope-top">
+                        <span class="scope-name">{scope.name}</span>
+                        <span class="scope-pct">{scope.pct}%</span>
+                    </span>
+                    <span class="scope-bar"><span style={`width:${scope.pct}%`}></span></span>
+                    <span class="scope-counts">{scope.done}/{scope.total}</span>
                 </button>
             {/each}
         </nav>
     {/if}
 
-    <nav class="project-tabs" aria-label={lang === 'ru' ? 'Представление проекта' : 'Project view'}>
-        <button class:active={$currentTab === 'board'} on:click={() => $currentTab = 'board'}>{t(lang, 'kanban_board')}</button>
-        <button class:active={$currentTab === 'table'} on:click={() => $currentTab = 'table'}>{t(lang, 'table_view')}</button>
-        <button class:active={$currentTab === 'calendar'} on:click={() => $currentTab = 'calendar'}>{t(lang, 'calendar_view')}</button>
-        <button class:active={$currentTab === 'dashboard'} on:click={() => $currentTab = 'dashboard'}>{t(lang, 'dashboard_view')}</button>
-        <button class:active={$currentTab === 'gallery'} on:click={() => $currentTab = 'gallery'}>{t(lang, 'gallery_view') || 'Gallery'}</button>
-        <button class:active={$currentTab === 'canvas'} on:click={() => $currentTab = 'canvas'}>{t(lang, 'canvas_view') || 'Canvas'}</button>
+    <nav class="tabs" aria-label={t(lang, 'projects_tabs_aria')}>
+        {#each tabs as tab (tab.id)}
+            <button class:active={$currentTab === tab.id} on:click={() => $currentTab = tab.id}>
+                <span use:icon={tab.icon}></span><span>{t(lang, tab.label)}</span>
+            </button>
+        {/each}
     </nav>
 
-    {#if $currentTab !== 'canvas'}
-        <div class="project-filters">
-            <input type="search" placeholder={lang === 'ru' ? 'Поиск задач' : 'Search tasks'} bind:value={$searchQuery} />
-            <select bind:value={$filterHabit} aria-label={lang === 'ru' ? 'Фильтр привычки' : 'Habit filter'}>
-                <option value="all">{lang === 'ru' ? 'Все привычки' : 'All habits'}</option>
-                <option value="none">{lang === 'ru' ? 'Без привычки' : 'No habit'}</option>
-                {#each habits as habit}<option value={habit}>{habit}</option>{/each}
-            </select>
-            <select bind:value={$filterTag} aria-label={lang === 'ru' ? 'Фильтр тега' : 'Tag filter'}>
-                <option value="all">{lang === 'ru' ? 'Все теги' : 'All tags'}</option>
-                {#each allTags as tag}<option value={tag}>#{tag}</option>{/each}
-            </select>
-            <label class="compact-toggle">
+    {#if activeScope}
+        <div class="filters">
+            <div class="search">
+                <span use:icon={'search'}></span>
+                <input type="search" placeholder={t(lang, 'projects_search')} aria-label={t(lang, 'projects_search')} bind:value={$searchQuery} />
+            </div>
+            <div class="chip">
+                <span use:icon={'repeat-2'}></span>
+                <select bind:value={$filterHabit} aria-label={t(lang, 'projects_filter_habit_aria')}>
+                    <option value="all">{t(lang, 'projects_filter_all_habits')}</option>
+                    <option value="none">{t(lang, 'projects_filter_no_habit')}</option>
+                    {#each habits as habit}<option value={habit}>{habit}</option>{/each}
+                </select>
+            </div>
+            <div class="chip">
+                <span use:icon={'tags'}></span>
+                <select bind:value={$filterTag} aria-label={t(lang, 'projects_filter_tag_aria')}>
+                    <option value="all">{t(lang, 'projects_filter_all_tags')}</option>
+                    {#each allTags as tag}<option value={tag}>#{tag}</option>{/each}
+                </select>
+            </div>
+            <label class="chip toggle">
                 <input type="checkbox" bind:checked={$compactMode} />
-                <span>{lang === 'ru' ? 'Компактно' : 'Compact'}</span>
+                <span use:icon={'list'}></span>
+                <span>{t(lang, 'projects_compact')}</span>
             </label>
         </div>
     {/if}
 
     {#if $selectedTasks.size}
-        <div class="bulk-toolbar">
-            <strong>{lang === 'ru' ? `Выбрано: ${$selectedTasks.size}` : `Selected: ${$selectedTasks.size}`}</strong>
-            <select bind:value={bulkStatus} on:change={() => void changeBulkStatus()}>
-                <option value="">{lang === 'ru' ? 'Изменить статус' : 'Change status'}</option>
+        <div class="bulk" role="toolbar" aria-label={t(lang, 'projects_selected_count', [$selectedTasks.size])}>
+            <strong>{t(lang, 'projects_selected_count', [$selectedTasks.size])}</strong>
+            <select bind:value={bulkStatus} on:change={() => void changeBulkStatus()} aria-label={t(lang, 'projects_change_status')}>
+                <option value="">{t(lang, 'projects_change_status')}</option>
                 {#each $columns as status}<option value={status}>{status}</option>{/each}
             </select>
-            <button on:click={() => void view.duplicateSelected()}>{lang === 'ru' ? 'Дублировать' : 'Duplicate'}</button>
-            <button on:click={() => void view.exportSelected()}>{lang === 'ru' ? 'Экспорт' : 'Export'}</button>
-            <button class="danger" on:click={() => void view.deleteSelected()}>{lang === 'ru' ? 'Удалить' : 'Delete'}</button>
-            <button class="clear" title={lang === 'ru' ? 'Снять выделение' : 'Clear selection'} aria-label={lang === 'ru' ? 'Снять выделение' : 'Clear selection'} on:click={() => view.clearSelection()}>×</button>
+            <button on:click={() => void view.duplicateSelected()}><span use:icon={'copy'}></span>{t(lang, 'projects_bulk_duplicate')}</button>
+            <button on:click={() => void view.exportSelected()}><span use:icon={'download'}></span>{t(lang, 'projects_bulk_export')}</button>
+            <button class="danger" on:click={() => void view.deleteSelected()}><span use:icon={'trash-2'}></span>{t(lang, 'projects_bulk_delete')}</button>
+            <button class="clear" title={t(lang, 'projects_clear_selection')} aria-label={t(lang, 'projects_clear_selection')} on:click={() => view.clearSelection()}>
+                <span use:icon={'x'}></span>
+            </button>
         </div>
     {/if}
 
-    <main class:canvas={$currentTab === 'canvas'}>
+    <main>
         {#if !activeScope}
-            <div class="empty">{lang === 'ru' ? 'Настройте область проекта' : 'Configure a project scope'}</div>
+            <div class="app-empty">
+                <span class="empty-icon" use:icon={'folder-open'}></span>
+                <h3>{t(lang, 'projects_empty_title')}</h3>
+                <p>{t(lang, 'projects_empty_hint')}</p>
+                <button class="empty-action" on:click={openSettings}><span use:icon={'settings'}></span>{t(lang, 'projects_open_settings')}</button>
+            </div>
         {:else if $currentTab === 'board'}
             <Board {plugin} {app} view={view.boardSubView} scope={activeScope} {ctx} />
         {:else if $currentTab === 'table'}
@@ -120,38 +163,65 @@
             <ProjectDashboard {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {:else if $currentTab === 'gallery'}
             <ProjectGallery {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
-        {:else}
-            <VanillaViewWrapper subView={view.canvasSubView} scope={activeScope} {ctx} />
+        {:else if $currentTab === 'timeline'}
+            <ProjectTimeline {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {/if}
     </main>
 </div>
 
 <style>
-    .projects-app { display:flex; flex-direction:column; height:100%; min-height:0; padding:12px; overflow:hidden; }
-    .scope-switcher,.project-tabs,.project-filters,.bulk-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:7px; flex-shrink:0; }
-    .scope-switcher { padding:8px 0 12px; overflow-x:auto; flex-wrap:nowrap; }
-    .scope-switcher button { position:relative; display:grid; grid-template-columns:auto auto; gap:2px 10px; min-width:130px; padding:7px 10px 9px; border:1px solid; border-radius:6px; text-align:left; }
-    .scope-switcher button.active { background:var(--background-modifier-hover); box-shadow:inset 0 0 0 1px var(--interactive-accent); }
-    .scope-switcher small { color:var(--text-muted); text-align:right; }
-    .scope-progress { grid-column:1/-1; height:3px; overflow:hidden; background:var(--background-modifier-border); }
-    .scope-progress span { display:block; height:100%; background:var(--interactive-accent); }
-    .project-tabs { padding-bottom:9px; border-bottom:1px solid var(--background-modifier-border); overflow-x:auto; flex-wrap:nowrap; }
-    .project-tabs button { white-space:nowrap; }
-    .project-tabs button.active { background:var(--interactive-accent); color:var(--text-on-accent); }
-    .project-filters { padding:10px 0; }
-    .project-filters input { flex:1 1 220px; max-width:360px; }
-    .project-filters input,.project-filters select { height:34px; }
-    .compact-toggle { display:flex; align-items:center; gap:6px; margin-left:auto; color:var(--text-muted); }
-    .bulk-toolbar { padding:8px 10px; background:var(--background-secondary); border-left:3px solid var(--interactive-accent); }
-    .bulk-toolbar strong { margin-right:auto; }
-    .bulk-toolbar .danger { color:var(--text-error); }
-    .bulk-toolbar .clear { width:28px; height:28px; padding:0; font-size:20px; }
-    main { position:relative; flex:1; min-height:0; padding-top:10px; overflow:auto; }
-    main.canvas { display:flex; overflow:hidden; }
-    .empty { padding:48px 16px; color:var(--text-muted); text-align:center; }
+    .projects-app { display:flex; flex-direction:column; gap:10px; height:100%; min-height:0; padding:12px; overflow:hidden; }
+
+    .scopes { display:flex; flex-shrink:0; gap:8px; overflow-x:auto; padding-bottom:2px; }
+    .scope-card { position:relative; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; min-width:168px; max-width:220px; padding:11px 14px 10px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); text-align:left; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+    .scope-card:hover { border-color:var(--background-modifier-border-hover); box-shadow:var(--shadow-m); transform:translateY(-1px); }
+    .scope-card.active { border-color:var(--scope-color); box-shadow:0 0 0 1px var(--scope-color), var(--shadow-s); }
+    .scope-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .scope-name { overflow:hidden; color:var(--text-normal); font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+    .scope-pct { color:var(--scope-color); font-size:.78rem; font-weight:700; }
+    .scope-bar { height:6px; overflow:hidden; border-radius:3px; background:var(--background-modifier-border); }
+    .scope-bar span { display:block; height:100%; border-radius:3px; background:var(--scope-color); transition:width .25s ease; }
+    .scope-counts { color:var(--text-faint); font-size:.68rem; }
+
+    .tabs { display:flex; flex-shrink:0; gap:4px; padding:4px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); overflow-x:auto; }
+    .tabs button { display:flex; flex:1 0 auto; align-items:center; justify-content:center; gap:7px; padding:7px 13px; border:0; border-radius:var(--radius-m); background:transparent; color:var(--text-muted); font-size:.82rem; white-space:nowrap; transition:background .12s ease, color .12s ease; }
+    .tabs button:hover { color:var(--text-normal); }
+    .tabs button.active { background:var(--interactive-accent); color:var(--text-on-accent); }
+    .tabs button span { display:block; width:15px; height:15px; }
+    .tabs button:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:1px; }
+
+    .filters { display:flex; align-items:center; flex-shrink:0; gap:8px; flex-wrap:wrap; }
+    .search { display:flex; flex:1 1 220px; max-width:360px; align-items:center; gap:8px; height:34px; padding:0 11px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); }
+    .search:focus-within { border-color:var(--interactive-accent); }
+    .search span { display:block; flex-shrink:0; width:15px; height:15px; color:var(--text-faint); }
+    .search input { flex:1; height:100%; padding:0; border:0; background:transparent; box-shadow:none; }
+    .chip { display:flex; height:34px; align-items:center; gap:7px; padding:0 10px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); color:var(--text-muted); font-size:.8rem; }
+    .chip:focus-within { border-color:var(--interactive-accent); }
+    .chip span { display:block; width:14px; height:14px; flex-shrink:0; }
+    .chip select { height:100%; padding:0; border:0; background:transparent; box-shadow:none; color:var(--text-normal); }
+    .chip.toggle { cursor:pointer; }
+    .chip.toggle:hover { border-color:var(--background-modifier-border-hover); }
+    .chip.toggle input { margin:0; }
+
+    .bulk { display:flex; align-items:center; flex-shrink:0; gap:8px; flex-wrap:wrap; padding:8px 12px; border:1px solid var(--background-modifier-border); border-left:3px solid var(--interactive-accent); border-radius:var(--radius-m); background:var(--background-secondary); box-shadow:var(--shadow-s); }
+    .bulk strong { margin-right:auto; color:var(--text-normal); font-size:.82rem; }
+    .bulk button { display:inline-flex; align-items:center; gap:6px; }
+    .bulk button span { display:block; width:14px; height:14px; }
+    .bulk .danger { color:var(--text-error); }
+    .bulk .clear { width:30px; height:30px; justify-content:center; padding:6px; }
+
+    main { position:relative; flex:1; min-height:0; overflow:auto; }
+    .app-empty { display:flex; flex-direction:column; align-items:center; gap:6px; margin:8vh auto 0; max-width:420px; padding:40px 24px; border:1px dashed var(--background-modifier-border); border-radius:var(--radius-xl); background:var(--background-primary); text-align:center; }
+    .empty-icon { margin-bottom:6px; color:var(--text-faint); }
+    .empty-icon :global(svg) { width:36px; height:36px; }
+    .app-empty h3 { margin:0; color:var(--text-normal); font-size:1rem; }
+    .app-empty p { margin:0 0 10px; color:var(--text-muted); font-size:.8rem; }
+    .empty-action { display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:var(--radius-m); }
+    .empty-action span { display:block; width:14px; height:14px; }
+
     @media (max-width:600px) {
-        .projects-app { padding:8px; }
-        .compact-toggle { margin-left:0; }
-        .bulk-toolbar strong { flex-basis:100%; }
+        .projects-app { padding:8px; gap:8px; }
+        .tabs button span { display:none; }
+        .tabs button { flex:1 1 0; padding:7px 6px; }
     }
 </style>

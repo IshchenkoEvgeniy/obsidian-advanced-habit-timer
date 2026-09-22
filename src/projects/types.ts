@@ -62,7 +62,7 @@ export function projectTaskId(filePath: string, sourceLine?: number, blockId?: s
     return sourceLine === undefined ? `file:${filePath}` : `line:${filePath}:${sourceLine}`;
 }
 
-export type ProjectTab = 'board' | 'table' | 'calendar' | 'dashboard' | 'gallery' | 'canvas';
+export type ProjectTab = 'board' | 'table' | 'calendar' | 'dashboard' | 'gallery' | 'timeline';
 
 export interface TaskData {
     name: string;

@@ -6,7 +6,6 @@ import ProjectsApp from './components/projects/ProjectsApp.svelte';
 import type { ProjectScopeDefinition, ProjectScopeStats, ProjectTask, TaskData } from './projects/types';
 import { ProjectDataEngine } from './projects/project-data';
 import { BoardView } from './projects/views/board-view';
-import { CanvasView } from './projects/views/canvas-view';
 import { isDone } from './utils/status';
 import { projectTaskToData } from './projects/task-data';
 import {
@@ -27,7 +26,6 @@ export class ProjectsView extends ItemView {
 
     readonly dataEngine: ProjectDataEngine;
     readonly boardSubView: BoardView;
-    readonly canvasSubView: CanvasView;
 
     private component: ReturnType<typeof mount> | null = null;
     private loadTasksTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -37,7 +35,6 @@ export class ProjectsView extends ItemView {
         super(leaf);
         this.dataEngine = new ProjectDataEngine(this.app, plugin);
         this.boardSubView = new BoardView(this.app, plugin, this.dataEngine);
-        this.canvasSubView = new CanvasView(this.app, plugin, this.dataEngine);
     }
 
     getViewType(): string { return VIEW_TYPE_PROJECTS; }
@@ -75,7 +72,6 @@ export class ProjectsView extends ItemView {
         this.loadGeneration++;
         if (this.loadTasksTimeout) clearTimeout(this.loadTasksTimeout);
         this.loadTasksTimeout = null;
-        this.canvasSubView.destroy();
         await this.boardSubView.destroy();
         if (this.component) await unmount(this.component);
         this.component = null;

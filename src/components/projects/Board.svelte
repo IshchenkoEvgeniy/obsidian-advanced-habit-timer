@@ -27,14 +27,25 @@
 
     $: lang = plugin.settings.language;
     $: columns = ctx.columns;
-    $: columnsData = columns.map(name => ({
+    $: columnsData = columns.map((name, index) => ({
         name,
+        color: columnColor(name, index === columns.length - 1),
         isCollapsed: collapsedColumns.has(name),
         tasks: ctx.filteredTasks
             .filter(task => task.status === name)
             .sort((a, b) => (a.order || 0) - (b.order || 0))
     }));
     $: subProjects = buildSubprojects();
+
+    function hashHue(value: string): number {
+        let hash = 0;
+        for (let index = 0; index < value.length; index++) hash = value.charCodeAt(index) + ((hash << 5) - hash);
+        return Math.abs(hash) % 360;
+    }
+    /** Final column reads as "done" and always gets the success hue. */
+    function columnColor(name: string, isLast: boolean): string {
+        return `hsl(${isLast ? 142 : hashHue(name)}, 45%, 48%)`;
+    }
 
     function buildSubprojects(): Record<string, { total: number; done: number }> | null {
         if (scope.sourceType !== 'folder') return null;
@@ -121,12 +132,86 @@
         ctx.onRefresh();
     }
 
+    function localDateKey(date: Date): string {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+    function addDaysLocal(days: number): string {
+        const date = new Date();
+        date.setDate(date.getDate() + days);
+        return localDateKey(date);
+    }
+    function isOverdue(task: ProjectTask): boolean {
+        return Boolean(task.endDate && task.endDate.slice(0, 10) < localDateKey(new Date()) && !taskDone(task));
+    }
+    function subtaskProgress(task: ProjectTask): { done: number; total: number; pct: number } {
+        const total = task.subtasks?.length || 0;
+        const done = task.subtasks?.filter(item => item.checked).length || 0;
+        return { done, total, pct: total ? Math.round(done / total * 100) : 0 };
+    }
+    function priorityLabel(value: string): string {
+        const keys: Record<string, 'priority_low' | 'priority_medium' | 'priority_high'> = {
+            low: 'priority_low', medium: 'priority_medium', high: 'priority_high'
+        };
+        return keys[value] ? t(lang, keys[value]) : value;
+    }
+
+    /** Quick deadline action — writes startDate/endDate through the regular saveTask path. */
+    async function setDeadline(task: ProjectTask, endDate: string): Promise<void> {
+        const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { endDate });
+        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+        ctx.onRefresh();
+    }
+
+    /** Quick priority action — writes priority through the regular saveTask path. */
+    async function setPriority(task: ProjectTask, priority?: string): Promise<void> {
+        if ((task.priority || undefined) === priority) return;
+        const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { priority });
+        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+        ctx.onRefresh();
+    }
+
+    function deadlineMenu(event: MouseEvent, task: ProjectTask): void {
+        event.stopPropagation();
+        const menu = new Menu();
+        const current = task.endDate?.slice(0, 10);
+        menu.addItem(item => item.setTitle(t(lang, 'board_deadline_today'))
+            .setChecked(current === localDateKey(new Date()))
+            .onClick(() => void setDeadline(task, localDateKey(new Date()))));
+        menu.addItem(item => item.setTitle(t(lang, 'board_deadline_tomorrow'))
+            .setChecked(current === addDaysLocal(1))
+            .onClick(() => void setDeadline(task, addDaysLocal(1))));
+        menu.addItem(item => item.setTitle(t(lang, 'board_deadline_week'))
+            .onClick(() => void setDeadline(task, addDaysLocal(7))));
+        menu.addSeparator();
+        menu.addItem(item => item.setTitle(t(lang, 'board_deadline_pick')).setIcon('calendar-clock')
+            .onClick(() => editTask(task)));
+        if (current) {
+            menu.addItem(item => item.setTitle(t(lang, 'board_deadline_clear')).setIcon('x')
+                .onClick(() => void setDeadline(task, '')));
+        }
+        menu.showAtMouseEvent(event);
+    }
+
+    function priorityMenu(event: MouseEvent, task: ProjectTask): void {
+        event.stopPropagation();
+        const menu = new Menu();
+        const options: Array<[string | undefined, 'priority_none' | 'priority_low' | 'priority_medium' | 'priority_high']> = [
+            [undefined, 'priority_none'], ['low', 'priority_low'], ['medium', 'priority_medium'], ['high', 'priority_high']
+        ];
+        for (const [value, key] of options) {
+            menu.addItem(item => item.setTitle(t(lang, key))
+                .setChecked((task.priority || undefined) === value)
+                .onClick(() => void setPriority(task, value)));
+        }
+        menu.showAtMouseEvent(event);
+    }
+
     function openMenu(event: MouseEvent, task: ProjectTask): void {
         event.stopPropagation();
         const menu = new Menu();
-        menu.addItem(item => item.setTitle(lang === 'ru' ? 'Открыть заметку' : 'Open note').setIcon('file-text')
+        menu.addItem(item => item.setTitle(t(lang, 'board_open_note')).setIcon('file-text')
             .onClick(() => void app.workspace.getLeaf(false).openFile(task.file)));
-        menu.addItem(item => item.setTitle(lang === 'ru' ? 'Редактировать' : 'Edit').setIcon('pencil')
+        menu.addItem(item => item.setTitle(t(lang, 'edit_task')).setIcon('pencil')
             .onClick(() => editTask(task)));
         menu.addSeparator();
         for (const status of columns) {
@@ -134,20 +219,11 @@
                 .onClick(() => void setStatus(task, status)));
         }
         menu.addSeparator();
-        menu.addItem(item => item.setTitle(lang === 'ru' ? 'Дублировать' : 'Duplicate').setIcon('copy')
+        menu.addItem(item => item.setTitle(t(lang, 'projects_bulk_duplicate')).setIcon('copy')
             .onClick(() => void duplicateTask(task)));
-        menu.addItem(item => item.setTitle(lang === 'ru' ? 'Удалить' : 'Delete').setIcon('trash-2')
+        menu.addItem(item => item.setTitle(t(lang, 'delete')).setIcon('trash-2')
             .onClick(() => void deleteTask(task)));
         menu.showAtMouseEvent(event);
-    }
-
-    function subtaskProgress(task: ProjectTask): number {
-        if (!task.subtasks?.length) return 0;
-        return Math.round(task.subtasks.filter(item => item.checked).length / task.subtasks.length * 100);
-    }
-
-    function isOverdue(task: ProjectTask): boolean {
-        return Boolean(task.endDate && task.endDate < new Date().toISOString().slice(0, 10) && !taskDone(task));
     }
 
     function handleDragStart(event: DragEvent, taskId: string): void {
@@ -180,10 +256,11 @@
 
 {#if subProjects}
     <section class="subprojects" aria-label={lang === 'ru' ? 'Подпроекты' : 'Subprojects'}>
-        {#each Object.entries(subProjects) as [name, summary]}
+        {#each Object.entries(subProjects) as [name, summary] (name)}
             <div class="subproject">
-                <span>{name}</span><small>{summary.done}/{summary.total}</small>
-                <div><span style:width={`${summary.total ? summary.done / summary.total * 100 : 0}%`}></span></div>
+                <span class="subproject-name">{name}</span>
+                <span class="subproject-counts">{summary.done}/{summary.total}</span>
+                <div class="subproject-bar"><span style={`width:${summary.total ? summary.done / summary.total * 100 : 0}%`}></span></div>
             </div>
         {/each}
     </section>
@@ -192,50 +269,75 @@
 <div class="kanban-board">
     {#each columnsData as column (column.name)}
         {#if column.isCollapsed}
-            <button class="collapsed-column" title={lang === 'ru' ? 'Развернуть колонку' : 'Expand column'} on:click={() => toggleColumn(column.name)}>
+            <button class="collapsed-column" title={t(lang, 'board_expand_column')} on:click={() => toggleColumn(column.name)}>
                 <span use:icon={'panel-right-open'}></span><strong>{column.name}</strong><small>{column.tasks.length}</small>
             </button>
         {:else}
-            <section class:hovered={hoverColumn === column.name} class="kanban-column" role="list"
+            <section
+                class="kanban-column"
+                class:drag-over={hoverColumn === column.name}
+                style={`--column-color:${column.color}`}
+                role="list"
                 aria-label={`${column.name}: ${column.tasks.length}`}
                 on:dragover|preventDefault={() => hoverColumn = column.name}
                 on:dragleave={() => hoverColumn = null}
-                on:drop={(event) => void handleDrop(event, column.name)}>
+                on:drop={(event) => void handleDrop(event, column.name)}
+            >
                 <header>
-                    <div><h3>{column.name}</h3><span>{column.tasks.length}</span></div>
+                    <div class="col-title">
+                        <i class="dot" aria-hidden="true"></i>
+                        <h3>{column.name}</h3>
+                        <span class="count">{column.tasks.length}</span>
+                    </div>
                     <div class="column-actions">
-                        <button title={lang === 'ru' ? 'Добавить задачу' : 'Add task'} on:click={(event) => addTask(event, column.name)}><span use:icon={'plus'}></span></button>
-                        <button title={lang === 'ru' ? 'Свернуть колонку' : 'Collapse column'} on:click={() => toggleColumn(column.name)}><span use:icon={'panel-right-close'}></span></button>
+                        <button title={t(lang, 'board_add_task')} aria-label={t(lang, 'board_add_task')} on:click={(event) => addTask(event, column.name)}><span use:icon={'plus'}></span></button>
+                        <button title={t(lang, 'board_collapse_column')} aria-label={t(lang, 'board_collapse_column')} on:click={() => toggleColumn(column.name)}><span use:icon={'panel-right-close'}></span></button>
                     </div>
                 </header>
 
                 <div class="cards">
                     {#each column.tasks as task (task.id)}
-                        <article class:selected={ctx.selectedTasks.has(task.id)} class:done={taskDone(task)} class="kanban-card"
-                            data-task-id={task.id} draggable="true" style={`--task-color:${view.getTaskColor(task, scope.color)}`}
-                            animate:flip={{ duration: 180 }} in:fade={{ duration: 120 }}
-                            on:dragstart={(event) => handleDragStart(event, task.id)} on:dblclick={() => editTask(task)}
-                            on:contextmenu={(event) => openMenu(event, task)}>
+                        <article
+                            class="kanban-card"
+                            class:selected={ctx.selectedTasks.has(task.id)}
+                            class:done={taskDone(task)}
+                            data-task-id={task.id}
+                            draggable="true"
+                            style={`--task-color:${view.getTaskColor(task, scope.color)}`}
+                            animate:flip={{ duration: 180 }}
+                            in:fade={{ duration: 120 }}
+                            on:dragstart={(event) => handleDragStart(event, task.id)}
+                            on:dblclick={() => editTask(task)}
+                            on:contextmenu={(event) => openMenu(event, task)}
+                        >
                             <div class="card-heading">
                                 <input type="checkbox" checked={ctx.selectedTasks.has(task.id)}
-                                    aria-label={lang === 'ru' ? 'Выбрать задачу' : 'Select task'}
+                                    aria-label={t(lang, 'board_select')}
                                     on:click|stopPropagation on:change={(event) => selectTask(task, event.currentTarget.checked)} />
-                                <button class="task-title" title={lang === 'ru' ? 'Редактировать задачу' : 'Edit task'} on:click={() => editTask(task)}>{task.name}</button>
-                                {#if task.priority}<span class="priority {task.priority}">{task.priority}</span>{/if}
+                                <button class="task-title" title={t(lang, 'edit_task')} on:click={() => editTask(task)}>{task.name}</button>
+                                {#if task.priority}<span class={`pill priority ${task.priority}`}>{priorityLabel(task.priority)}</span>{/if}
                             </div>
 
                             {#if task.cover && !ctx.compactMode}<img class="cover" src={task.cover} alt="" loading="lazy" />{/if}
 
                             <div class="metadata">
-                                {#if task.habitName}<span><i use:icon={'repeat-2'}></i>{task.habitName}</span>{/if}
-                                {#if task.endDate}<span class:overdue={isOverdue(task)}><i use:icon={'calendar'}></i>{task.endDate}</span>{/if}
+                                {#if task.habitName}<span class="meta-item"><i use:icon={'repeat-2'}></i>{task.habitName}</span>{/if}
+                                {#if task.endDate}
+                                    <span class="meta-item due" class:overdue={isOverdue(task)} title={isOverdue(task) ? t(lang, 'board_overdue') : undefined}>
+                                        <i use:icon={'calendar-clock'}></i>{task.endDate.slice(0, 10)}
+                                    </span>
+                                {/if}
                                 {#if task.timeSpentSec || task.timeEstimatedSec}
-                                    <span><i use:icon={'clock-3'}></i>{plugin.formatTime(task.timeSpentSec)}{task.timeEstimatedSec ? ` / ${plugin.formatTime(task.timeEstimatedSec)}` : ''}</span>
+                                    <span class="meta-item"><i use:icon={'clock-3'}></i>{plugin.formatTime(task.timeSpentSec)}{task.timeEstimatedSec ? ` / ${plugin.formatTime(task.timeEstimatedSec)}` : ''}</span>
                                 {/if}
                             </div>
 
                             {#if task.subtasks?.length && !ctx.compactMode}
-                                <div class="subtask-progress"><span style:width={`${subtaskProgress(task)}%`}></span></div>
+                                {@const progress = subtaskProgress(task)}
+                                <div class="subtask-row">
+                                    <div class="subtask-progress"><span style={`width:${progress.pct}%`}></span></div>
+                                    <small>{progress.done}/{progress.total}</small>
+                                </div>
                                 <div class="subtasks">
                                     {#each task.subtasks.slice(0, 4) as subtask}
                                         <label class:checked={subtask.checked}>
@@ -243,7 +345,7 @@
                                             <span>{subtask.text}</span>
                                         </label>
                                     {/each}
-                                    {#if task.subtasks.length > 4}<small>+{task.subtasks.length - 4}</small>{/if}
+                                    {#if task.subtasks.length > 4}<small class="more">+{task.subtasks.length - 4}</small>{/if}
                                 </div>
                             {/if}
 
@@ -251,17 +353,22 @@
                                 <div class="tags">{#each task.tags.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 4) as tag}<span>#{tag}</span>{/each}</div>
                             {/if}
 
-                            <footer>
-                                <button title={lang === 'ru' ? 'Открыть заметку' : 'Open note'} on:click={() => void app.workspace.getLeaf(false).openFile(task.file)}><span use:icon={'file-text'}></span></button>
-                                <button title={lang === 'ru' ? 'Запустить таймер' : 'Start timer'} disabled={!task.habitName} on:click={() => void view.dataEngine.startTimerForTask(task, scope.sourceType === 'file')}><span use:icon={'play'}></span></button>
-                                <button class:active={taskDone(task)} title={taskDone(task) ? (lang === 'ru' ? 'Вернуть в работу' : 'Reopen') : (lang === 'ru' ? 'Завершить' : 'Complete')} on:click={() => void toggleDone(task)}><span use:icon={taskDone(task) ? 'rotate-ccw' : 'check'}></span></button>
-                                <button title={lang === 'ru' ? 'Редактировать' : 'Edit'} on:click={() => editTask(task)}><span use:icon={'pencil'}></span></button>
-                                <button class="danger" title={lang === 'ru' ? 'Удалить' : 'Delete'} on:click={() => void deleteTask(task)}><span use:icon={'trash-2'}></span></button>
-                                <button title={lang === 'ru' ? 'Другие действия' : 'More actions'} on:click={(event) => openMenu(event, task)}><span use:icon={'ellipsis'}></span></button>
+                            <footer class="quick">
+                                <button title={t(lang, 'board_open_note')} aria-label={t(lang, 'board_open_note')} on:click={() => void app.workspace.getLeaf(false).openFile(task.file)}><span use:icon={'file-text'}></span></button>
+                                <button title={t(lang, 'board_start_timer')} aria-label={t(lang, 'board_start_timer')} disabled={!task.habitName} on:click={() => void view.dataEngine.startTimerForTask(task, scope.sourceType === 'file')}><span use:icon={'play'}></span></button>
+                                <button title={t(lang, 'board_set_deadline')} aria-label={t(lang, 'board_set_deadline')} on:click={(event) => deadlineMenu(event, task)}><span use:icon={'calendar-clock'}></span></button>
+                                <button title={t(lang, 'board_set_priority')} aria-label={t(lang, 'board_set_priority')} on:click={(event) => priorityMenu(event, task)}><span use:icon={'flag'}></span></button>
+                                <button class:active={taskDone(task)} title={taskDone(task) ? t(lang, 'board_reopen') : t(lang, 'board_complete')} aria-label={taskDone(task) ? t(lang, 'board_reopen') : t(lang, 'board_complete')} on:click={() => void toggleDone(task)}><span use:icon={taskDone(task) ? 'rotate-ccw' : 'check'}></span></button>
+                                <button title={t(lang, 'board_more')} aria-label={t(lang, 'board_more')} on:click={(event) => openMenu(event, task)}><span use:icon={'ellipsis'}></span></button>
                             </footer>
                         </article>
                     {/each}
-                    {#if !column.tasks.length}<div class="column-empty">{lang === 'ru' ? 'Перетащите задачу сюда' : 'Drop a task here'}</div>{/if}
+                    {#if !column.tasks.length}
+                        <div class="column-empty" class:active={hoverColumn === column.name}>
+                            <span class="empty-icon" use:icon={'inbox'}></span>
+                            <span>{t(lang, 'board_column_empty')}</span>
+                        </div>
+                    {/if}
                 </div>
             </section>
         {/if}
@@ -269,31 +376,76 @@
 </div>
 
 <style>
-    .subprojects { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-bottom:10px; }
-    .subproject { display:grid; grid-template-columns:1fr auto; gap:5px 10px; padding:8px 10px; border:1px solid var(--background-modifier-border); border-radius:6px; background:var(--background-secondary); }
-    .subproject > span { overflow:hidden; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }.subproject small { color:var(--text-muted); }
-    .subproject > div { grid-column:1/-1; height:3px; overflow:hidden; background:var(--background-modifier-border); }.subproject > div span { display:block; height:100%; background:var(--interactive-accent); }
+    .subprojects { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-bottom:2px; }
+    .subproject { display:grid; grid-template-columns:1fr auto; gap:5px 10px; padding:9px 12px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); }
+    .subproject-name { overflow:hidden; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+    .subproject-counts { color:var(--text-muted); }
+    .subproject-bar { grid-column:1/-1; height:4px; overflow:hidden; border-radius:2px; background:var(--background-modifier-border); }
+    .subproject-bar span { display:block; height:100%; border-radius:2px; background:var(--interactive-accent); }
+
     .kanban-board { display:flex; gap:12px; min-height:100%; padding:2px; overflow-x:auto; align-items:stretch; }
-    .kanban-column { display:flex; flex:0 0 300px; flex-direction:column; min-width:0; border:1px solid var(--background-modifier-border); border-radius:7px; background:var(--background-secondary); transition:border-color .15s,background .15s; }
-    .kanban-column.hovered { border-color:var(--interactive-accent); background:var(--background-modifier-hover); }
-    .kanban-column > header { display:flex; align-items:center; justify-content:space-between; min-height:42px; padding:7px 8px 7px 11px; border-bottom:1px solid var(--background-modifier-border); }
-    header > div { display:flex; align-items:center; gap:7px; min-width:0; } h3 { margin:0; overflow:hidden; font-size:.9rem; text-overflow:ellipsis; white-space:nowrap; }
-    header > div > span { min-width:20px; padding:1px 5px; border-radius:3px; background:var(--background-primary); color:var(--text-muted); font-size:.68rem; text-align:center; }
-    .column-actions button,.kanban-card footer button { display:grid; place-items:center; width:27px; height:27px; padding:5px; }
-    .column-actions span,.kanban-card footer span,.collapsed-column > span { width:15px; height:15px; }
-    .cards { display:flex; flex:1; flex-direction:column; gap:8px; min-height:80px; padding:8px; overflow-y:auto; }
-    .kanban-card { position:relative; flex-shrink:0; overflow:hidden; border:1px solid var(--background-modifier-border); border-left:3px solid var(--task-color,var(--interactive-accent)); border-radius:6px; background:var(--background-primary); box-shadow:0 1px 2px rgba(0,0,0,.08); cursor:grab; }
-    .kanban-card:hover { border-color:var(--background-modifier-border-hover); }.kanban-card.selected { box-shadow:inset 0 0 0 1px var(--interactive-accent); }.kanban-card.done .task-title { color:var(--text-muted); text-decoration:line-through; }
-    .card-heading { display:flex; align-items:flex-start; gap:7px; padding:10px 10px 5px; }.card-heading input { flex:0 0 auto; margin-top:3px; }
+    .kanban-column { display:flex; flex:0 0 300px; flex-direction:column; min-width:0; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); transition:outline .1s ease, background .12s ease; }
+    .kanban-column.drag-over { outline:2px dashed var(--interactive-accent); outline-offset:-2px; background:var(--background-modifier-hover); }
+    .kanban-column > header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:44px; padding:8px 8px 8px 12px; border-bottom:1px solid var(--background-modifier-border); }
+    .col-title { display:flex; align-items:center; gap:8px; min-width:0; }
+    .col-title .dot { display:block; flex-shrink:0; width:9px; height:9px; border-radius:50%; background:var(--column-color); }
+    h3 { margin:0; overflow:hidden; font-size:.9rem; text-overflow:ellipsis; white-space:nowrap; }
+    .count { min-width:22px; padding:1px 7px; border-radius:9px; background:color-mix(in srgb, var(--column-color) 14%, transparent); color:var(--column-color); font-size:.68rem; font-weight:600; text-align:center; }
+    .column-actions button, .quick button { display:grid; place-items:center; width:27px; height:27px; padding:5px; }
+    .column-actions span, .quick span, .collapsed-column > span { width:15px; height:15px; }
+    .cards { display:flex; flex:1; flex-direction:column; gap:9px; min-height:80px; padding:9px; overflow-y:auto; }
+
+    .kanban-card { position:relative; flex-shrink:0; overflow:hidden; border:1px solid var(--background-modifier-border); border-left:3px solid var(--task-color,var(--interactive-accent)); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); cursor:grab; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+    .kanban-card:hover { border-color:var(--background-modifier-border-hover); box-shadow:var(--shadow-m); transform:translateY(-2px); }
+    .kanban-card.selected { box-shadow:inset 0 0 0 1px var(--interactive-accent), var(--shadow-s); }
+    .kanban-card.done .task-title { color:var(--text-muted); text-decoration:line-through; }
+
+    .card-heading { display:flex; align-items:flex-start; gap:8px; padding:11px 11px 5px; }
+    .card-heading input { flex:0 0 auto; margin-top:3px; }
     .task-title { flex:1; min-width:0; padding:0; border:0; background:transparent; box-shadow:none; color:var(--text-normal); font:inherit; font-size:.86rem; font-weight:600; line-height:1.3; text-align:left; overflow-wrap:anywhere; }
-    .task-title:hover { background:transparent; color:var(--text-accent); }.priority { flex:0 0 auto; padding:2px 4px; border-radius:3px; background:var(--background-secondary); font-size:.58rem; text-transform:uppercase; }.priority.high { color:var(--text-error); }.priority.medium { color:var(--text-warning); }.priority.low { color:var(--text-success); }
-    .cover { width:calc(100% - 20px); max-height:115px; margin:3px 10px 7px; border-radius:4px; object-fit:cover; }
-    .metadata { display:flex; flex-wrap:wrap; gap:4px 10px; padding:3px 10px 7px; color:var(--text-muted); font-size:.68rem; }.metadata span { display:flex; align-items:center; gap:4px; min-width:0; }.metadata i { display:block; width:12px; height:12px; }.metadata .overdue { color:var(--text-error); }
-    .subtask-progress { height:3px; margin:0 10px 5px; overflow:hidden; background:var(--background-modifier-border); }.subtask-progress span { display:block; height:100%; background:var(--interactive-accent); }
-    .subtasks { display:flex; flex-direction:column; gap:2px; padding:0 10px 7px; }.subtasks label { display:flex; align-items:flex-start; gap:6px; min-width:0; color:var(--text-muted); font-size:.68rem; }.subtasks label.checked span { text-decoration:line-through; opacity:.7; }.subtasks input { flex:0 0 auto; margin-top:2px; }.subtasks span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.subtasks small { padding-left:22px; color:var(--text-faint); }
-    .tags { display:flex; flex-wrap:wrap; gap:4px; padding:0 10px 8px; }.tags span { padding:2px 4px; border-radius:3px; background:var(--background-secondary); color:var(--text-muted); font-size:.61rem; }
-    .kanban-card footer { display:flex; justify-content:flex-end; gap:3px; padding:6px 7px; border-top:1px solid var(--background-modifier-border); background:var(--background-secondary-alt); }.kanban-card footer button.active { color:var(--text-success); }.kanban-card footer button.danger:hover { color:var(--text-error); }
-    .column-empty { display:grid; min-height:72px; place-items:center; border:1px dashed var(--background-modifier-border); border-radius:5px; color:var(--text-faint); font-size:.72rem; text-align:center; }
-    .collapsed-column { display:flex; flex:0 0 40px; width:40px; align-items:center; gap:10px; padding:9px 7px; border:1px solid var(--background-modifier-border); border-radius:7px; background:var(--background-secondary); color:var(--text-muted); writing-mode:vertical-rl; }.collapsed-column strong { overflow:hidden; font-size:.76rem; text-overflow:ellipsis; white-space:nowrap; }.collapsed-column small { color:var(--text-faint); }
-    @media (max-width:600px) { .kanban-column { flex-basis:270px; }.kanban-card footer button { width:31px; height:31px; } }
+    .task-title:hover { background:transparent; color:var(--text-accent); }
+    .pill { display:inline-flex; flex:0 0 auto; align-items:center; padding:1px 8px; border-radius:999px; font-size:.58rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+    .priority { border:1px solid currentColor; background:var(--background-secondary); }
+    .priority.low { color:var(--text-success); background:color-mix(in srgb, var(--text-success) 12%, transparent); }
+    .priority.medium { color:var(--text-warning); background:color-mix(in srgb, var(--text-warning) 14%, transparent); }
+    .priority.high { color:var(--text-error); background:color-mix(in srgb, var(--text-error) 12%, transparent); }
+
+    .cover { width:calc(100% - 22px); max-height:115px; margin:3px 11px 7px; border-radius:var(--radius-m); object-fit:cover; }
+
+    .metadata { display:flex; flex-wrap:wrap; gap:4px; padding:3px 11px 7px; }
+    .meta-item { display:inline-flex; align-items:center; gap:4px; min-width:0; padding:2px 7px; border-radius:999px; background:var(--background-secondary); color:var(--text-muted); font-size:.66rem; }
+    .meta-item i { display:block; width:11px; height:11px; }
+    .meta-item.due.overdue { background:color-mix(in srgb, var(--text-error) 12%, transparent); color:var(--text-error); font-weight:600; }
+
+    .subtask-row { display:flex; align-items:center; gap:8px; margin:0 11px 5px; }
+    .subtask-progress { flex:1; height:4px; overflow:hidden; border-radius:2px; background:var(--background-modifier-border); }
+    .subtask-progress span { display:block; height:100%; border-radius:2px; background:var(--interactive-accent); transition:width .2s ease; }
+    .subtask-row small { flex-shrink:0; color:var(--text-faint); font-size:.62rem; }
+    .subtasks { display:flex; flex-direction:column; gap:2px; padding:0 11px 7px; }
+    .subtasks label { display:flex; align-items:flex-start; gap:6px; min-width:0; color:var(--text-muted); font-size:.68rem; }
+    .subtasks label.checked span { text-decoration:line-through; opacity:.7; }
+    .subtasks input { flex:0 0 auto; margin-top:2px; }
+    .subtasks span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .subtasks .more { padding-left:22px; color:var(--text-faint); }
+
+    .tags { display:flex; flex-wrap:wrap; gap:4px; padding:0 11px 8px; }
+    .tags span { padding:2px 7px; border-radius:999px; background:var(--background-secondary); color:var(--text-muted); font-size:.61rem; }
+
+    .quick { position:sticky; bottom:0; display:flex; justify-content:flex-end; gap:3px; padding:6px 8px; border-top:1px solid var(--background-modifier-border); background:var(--background-secondary-alt); opacity:0; transition:opacity .12s ease; }
+    .kanban-card:hover .quick, .kanban-card:focus-within .quick { opacity:1; }
+    @media (hover: none) { .quick { opacity:1; } }
+    .quick button.active { color:var(--text-success); }
+
+    .column-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; min-height:96px; padding:14px; border:1px dashed var(--background-modifier-border); border-radius:var(--radius-m); color:var(--text-faint); font-size:.72rem; text-align:center; transition:border-color .12s ease, background .12s ease; }
+    .column-empty.active { border-color:var(--interactive-accent); background:color-mix(in srgb, var(--interactive-accent) 7%, transparent); }
+    .column-empty .empty-icon :global(svg) { width:22px; height:22px; }
+
+    .collapsed-column { display:flex; flex:0 0 40px; width:40px; align-items:center; gap:10px; padding:9px 7px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); color:var(--text-muted); writing-mode:vertical-rl; }
+    .collapsed-column strong { overflow:hidden; font-size:.76rem; text-overflow:ellipsis; white-space:nowrap; }
+    .collapsed-column small { color:var(--text-faint); }
+
+    @media (max-width:600px) {
+        .kanban-column { flex-basis:270px; }
+        .quick button { width:31px; height:31px; }
+    }
 </style>
