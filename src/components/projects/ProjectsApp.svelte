@@ -95,7 +95,7 @@
     <nav class="tabs" aria-label={t(lang, 'projects_tabs_aria')}>
         {#each tabs as tab (tab.id)}
             <button class:active={$currentTab === tab.id} on:click={() => $currentTab = tab.id}>
-                <span use:icon={tab.icon}></span><span>{t(lang, tab.label)}</span>
+                <span class="tab-icon" use:icon={tab.icon}></span><span class="tab-label">{t(lang, tab.label)}</span>
             </button>
         {/each}
     </nav>
@@ -107,7 +107,7 @@
                 <input type="search" placeholder={t(lang, 'projects_search')} aria-label={t(lang, 'projects_search')} bind:value={$searchQuery} />
             </div>
             <div class="chip">
-                <span use:icon={'repeat-2'}></span>
+                <span class="chip-icon" use:icon={'repeat-2'}></span>
                 <select bind:value={$filterHabit} aria-label={t(lang, 'projects_filter_habit_aria')}>
                     <option value="all">{t(lang, 'projects_filter_all_habits')}</option>
                     <option value="none">{t(lang, 'projects_filter_no_habit')}</option>
@@ -115,7 +115,7 @@
                 </select>
             </div>
             <div class="chip">
-                <span use:icon={'tags'}></span>
+                <span class="chip-icon" use:icon={'tags'}></span>
                 <select bind:value={$filterTag} aria-label={t(lang, 'projects_filter_tag_aria')}>
                     <option value="all">{t(lang, 'projects_filter_all_tags')}</option>
                     {#each allTags as tag}<option value={tag}>#{tag}</option>{/each}
@@ -123,7 +123,7 @@
             </div>
             <label class="chip toggle">
                 <input type="checkbox" bind:checked={$compactMode} />
-                <span use:icon={'list'}></span>
+                <span class="chip-icon" use:icon={'list'}></span>
                 <span>{t(lang, 'projects_compact')}</span>
             </label>
         </div>
@@ -136,11 +136,11 @@
                 <option value="">{t(lang, 'projects_change_status')}</option>
                 {#each $columns as status}<option value={status}>{status}</option>{/each}
             </select>
-            <button on:click={() => void view.duplicateSelected()}><span use:icon={'copy'}></span>{t(lang, 'projects_bulk_duplicate')}</button>
-            <button on:click={() => void view.exportSelected()}><span use:icon={'download'}></span>{t(lang, 'projects_bulk_export')}</button>
-            <button class="danger" on:click={() => void view.deleteSelected()}><span use:icon={'trash-2'}></span>{t(lang, 'projects_bulk_delete')}</button>
+            <button on:click={() => void view.duplicateSelected()}><span class="bulk-icon" use:icon={'copy'}></span>{t(lang, 'projects_bulk_duplicate')}</button>
+            <button on:click={() => void view.exportSelected()}><span class="bulk-icon" use:icon={'download'}></span>{t(lang, 'projects_bulk_export')}</button>
+            <button class="danger" on:click={() => void view.deleteSelected()}><span class="bulk-icon" use:icon={'trash-2'}></span>{t(lang, 'projects_bulk_delete')}</button>
             <button class="clear" title={t(lang, 'projects_clear_selection')} aria-label={t(lang, 'projects_clear_selection')} on:click={() => view.clearSelection()}>
-                <span use:icon={'x'}></span>
+                <span class="bulk-icon" use:icon={'x'}></span>
             </button>
         </div>
     {/if}
@@ -188,7 +188,9 @@
     .tabs button { display:flex; flex:0 0 auto; align-items:center; justify-content:center; gap:7px; height:auto; min-height:0; padding:7px 13px; border:0; box-shadow:none; border-radius:var(--radius-m); background:transparent; color:var(--text-muted); font-size:.82rem; white-space:nowrap; transition:background .12s ease, color .12s ease; }
     .tabs button:hover { color:var(--text-normal); }
     .tabs button.active { background:var(--interactive-accent); color:var(--text-on-accent); }
-    .tabs button span { display:block; width:15px; height:15px; }
+    .tabs button .tab-icon { display:block; flex-shrink:0; width:15px; height:15px; }
+    .tabs button .tab-icon :global(svg) { width:15px; height:15px; }
+    .tabs button .tab-label { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .tabs button:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:1px; }
 
     .filters { display:flex; align-items:center; flex-shrink:0; gap:8px; flex-wrap:wrap; }
@@ -198,7 +200,8 @@
     .search input { flex:1; height:100%; padding:0; border:0; background:transparent; box-shadow:none; }
     .chip { display:flex; height:34px; align-items:center; gap:7px; padding:0 10px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); color:var(--text-muted); font-size:.8rem; }
     .chip:focus-within { border-color:var(--interactive-accent); }
-    .chip span { display:block; width:14px; height:14px; flex-shrink:0; }
+    .chip .chip-icon { display:block; flex-shrink:0; width:14px; height:14px; }
+    .chip .chip-icon :global(svg) { width:14px; height:14px; }
     .chip select { height:100%; padding:0; border:0; background:transparent; box-shadow:none; color:var(--text-normal); }
     .chip.toggle { height:auto; min-height:0; cursor:pointer; }
     .chip.toggle:hover { border-color:var(--background-modifier-border-hover); }
@@ -208,7 +211,8 @@
     .bulk { display:flex; align-items:center; flex-shrink:0; gap:8px; flex-wrap:wrap; padding:8px 12px; border:1px solid var(--background-modifier-border); border-left:3px solid var(--interactive-accent); border-radius:var(--radius-m); background:var(--background-secondary); box-shadow:var(--shadow-s); }
     .bulk strong { margin-right:auto; color:var(--text-normal); font-size:.82rem; }
     .bulk button { display:inline-flex; height:auto; min-height:0; align-items:center; gap:6px; }
-    .bulk button span { display:block; width:14px; height:14px; }
+    .bulk .bulk-icon { display:block; flex-shrink:0; width:14px; height:14px; }
+    .bulk .bulk-icon :global(svg) { width:14px; height:14px; }
     .bulk .danger { color:var(--text-error); }
     .bulk .clear { width:30px; height:30px; justify-content:center; padding:6px; }
 
@@ -223,7 +227,7 @@
 
     @media (max-width:600px) {
         .projects-app { padding:8px; gap:8px; }
-        .tabs button span { display:none; }
+        .tabs button .tab-icon { display:none; }
         .tabs button { flex:1 1 0; padding:7px 6px; }
     }
 </style>
