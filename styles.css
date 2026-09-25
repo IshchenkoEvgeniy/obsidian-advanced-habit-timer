@@ -4186,3 +4186,59 @@
 .task-planning-grid h3 { font-size:13px; }
 .task-planning-grid .standalone-row { flex-wrap:wrap; gap:6px; }
 .task-planning-grid .standalone-row > div { flex-basis:75%; }
+
+/* ============================================================
+   Focus Library — unified deep-black chrome (Raycast-style palette)
+   Scoped to .ht-workspace-shell (every plugin section view), so it
+   follows the Today screen and works in light & dark Obsidian themes.
+   ============================================================ */
+.ht-workspace-shell {
+    --fl-bg: #07080a;
+    --fl-surface: #101111;
+    --fl-surface-2: #1b1c1e;
+    --fl-border: #252829;
+    --fl-border-strong: #2f3031;
+    --fl-text: #f9f9f9;
+    --fl-text-2: #cecece;
+    --fl-muted: #9c9c9d;
+    --fl-faint: #6a6b6c;
+    --fl-accent: #55b3ff;
+    --fl-green: #5fc992;
+    --fl-yellow: #ffbc33;
+    --fl-red: #ff6363;
+
+    /* Re-map Obsidian primitives so every section inherits the chrome */
+    --background-primary: var(--fl-bg);
+    --background-primary-alt: var(--fl-surface);
+    --background-secondary: var(--fl-surface);
+    --background-secondary-alt: var(--fl-surface-2);
+    --background-modifier-border: var(--fl-border);
+    --background-modifier-border-hover: var(--fl-border-strong);
+    --background-modifier-hover: rgba(255, 255, 255, 0.04);
+    --background-modifier-active-hover: rgba(255, 255, 255, 0.07);
+    --text-normal: var(--fl-text);
+    --text-muted: var(--fl-muted);
+    --text-faint: var(--fl-faint);
+    --text-accent: var(--fl-accent);
+    --text-accent-hover: #7cc3ff;
+    --text-success: var(--fl-green);
+    --text-warning: var(--fl-yellow);
+    --text-error: var(--fl-red);
+    --interactive-accent: #2f6fd6;
+    --interactive-accent-hover: #3d80ea;
+    --interactive-accent-text: #ffffff;
+    --checkbox-color: #2f6fd6;
+    --checkbox-color-hover: #3d80ea;
+    --text-selection: rgba(85, 179, 255, 0.25);
+    --icon-color: var(--fl-muted);
+    --icon-color-hover: var(--fl-text);
+    --nav-item-color: var(--fl-muted);
+
+    background: var(--fl-bg);
+    color: var(--fl-text-2);
+}
+.ht-workspace-shell > .view-content {
+    background: var(--fl-bg);
+}
+/* keep soft-card shadows readable on near-black */
+.ht-workspace-shell .shadow-s, .ht-workspace-shell [class*='shadow'] { }
