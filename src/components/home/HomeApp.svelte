@@ -183,80 +183,83 @@
     </div>
 
     <div class="pane timer-pane">
-            <div class="timer">
-                <div class="t">{activeTimer ? fmtClock(activeTimerSeconds) : '00:00'}</div>
-                <div class="what">{activeTimer ? `${activeTimer.habitName} · ${timerStateLabel}` : t(lang, 'home4_timer_idle')}</div>
-                <div class="btns">
-                    {#if activeTimer}
-                        <button on:click={() => void toggleTimerPause()}>{activeTimer?.timerState === 'running' ? t(lang, 'home4_pause') : t(lang, 'home4_resume')}</button>
-                        <button on:click={() => void stopCurrentTimer()}>{t(lang, 'home4_stop')}</button>
-                        <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_open_timer')}</button>
-                    {:else}
-                        <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_start_session')}</button>
-                    {/if}
+        <div class="timer">
+            <div class="t">{activeTimer ? fmtClock(activeTimerSeconds) : '00:00'}</div>
+            <div class="what">{activeTimer ? `${activeTimer.habitName} · ${timerStateLabel}` : t(lang, 'home4_timer_idle')}</div>
+            <div class="btns">
+                {#if activeTimer}
+                    <button on:click={() => void toggleTimerPause()}>{activeTimer?.timerState === 'running' ? t(lang, 'home4_pause') : t(lang, 'home4_resume')}</button>
+                    <button on:click={() => void stopCurrentTimer()}>{t(lang, 'home4_stop')}</button>
+                    <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_open_timer')}</button>
+                {:else}
+                    <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_start_session')}</button>
+                {/if}
+            </div>
+        </div>
+        <div class="rings">
+            {#each habits.slice(0, 3) as entry, i (entry.habit.name)}
+                {@const p = pct(entry.progress.value, entry.progress.desired)}
+                <div class="ring">
+                    <div class="c" style={`background:conic-gradient(${['var(--green)', 'var(--blue)', 'var(--yellow)'][i]} ${p}%, var(--background-modifier-border) 0)`}>
+                        <span class="in">{p}%</span>
+                    </div>
+                    <div class="lbl">{shortHabit(entry.habit)}</div>
+                    <button class="ring-start" aria-label={t(lang, 'home_start_habit') + ': ' + entry.habit.name} on:click={() => void startHabit(entry.habit.name)}>▶</button>
                 </div>
-            </div>
-            <div class="rings">
-                {#each habits.slice(0, 3) as entry, i (entry.habit.name)}
-                    {@const p = pct(entry.progress.value, entry.progress.desired)}
-                    <div class="ring">
-                        <div class="c r{i + 1}" style={`background:conic-gradient(${['var(--green)', 'var(--blue)', 'var(--yellow)'][i]} ${p}%, var(--line) 0)`}>
-                            <span class="in">{p}%</span>
-                        </div>
-                        <div class="lbl">{shortHabit(entry.habit)}</div>
-                        <button class="ring-start" aria-label={t(lang, 'home_start_habit') + ': ' + entry.habit.name} on:click={() => void startHabit(entry.habit.name)}>▶</button>
-                    </div>
-                {:else}
-                    <p class="empty">{t(lang, 'home_habits_empty')}</p>
-                {/each}
-            </div>
-        </div></div>
+            {:else}
+                <p class="empty">{t(lang, 'home_habits_empty')}</p>
+            {/each}
+        </div>
+    </div>
 
-        <div class="pane tasks-pane">
+    <div class="pane tasks-pane">
+        <div class="q">
+            <h3>{t(lang, 'home4_queue_tasks')} <span>{nearest.length} · {doneCount} {t(lang, 'home4_done')}</span></h3>
+            {#each nearest as task (task.name + task.sortKey)}
+                <div class="row">
+                    <span class="st {task.overdue ? 'over' : task.today ? 'now' : 'plan'}">{task.overdue ? t(lang, 'home_overdue') : task.today ? t(lang, 'home4_today') : t(lang, 'home4_plan')}</span>
+                    <span class="nm">{task.name}</span>
+                    <span class="meta">{task.sortKey === '9999-12-31' ? t(lang, 'home_no_date') : task.sortKey.slice(5)}</span>
+                    <input type="checkbox" checked={task.done} aria-label={t(lang, 'home_task_done') + ': ' + task.name} on:change={(event) => void toggleTask(task, event)} />
+                </div>
+            {:else}
+                <div class="row empty-row"><span class="nm">{t(lang, 'home_tasks_empty')}</span></div>
+            {/each}
+        </div>
+    </div>
+
+    <div class="q2full">
+        <div class="pane">
             <div class="q">
-                <h3>{t(lang, 'home4_queue_tasks')} <span>{nearest.length} · {doneCount} {t(lang, 'home4_done')}</span></h3>
-                {#each nearest as task (task.name + task.sortKey)}
-                    <div class="row">
-                        <span class="st {task.overdue ? 'over' : task.today ? 'now' : 'plan'}">{task.overdue ? t(lang, 'home_overdue') : task.today ? t(lang, 'home4_today') : t(lang, 'home4_plan')}</span>
-                        <span class="nm">{task.name}</span>
-                        <span class="meta">{task.sortKey === '9999-12-31' ? t(lang, 'home_no_date') : task.sortKey.slice(5)}</span>
-                        <input type="checkbox" checked={task.done} aria-label={t(lang, 'home_task_done') + ': ' + task.name} on:change={(event) => void toggleTask(task, event)} />
+                <h3>{t(lang, 'home_projects_title')} <span>{projects.length}</span></h3>
+                {#each projects as project (project.scopeId)}
+                    <div class="row" role="button" tabindex="0" on:click={() => navigate('habit-projects-view')} on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate('habit-projects-view')}>
+                        <span class="st {project.pct >= 50 ? 'ok' : 'plan'}">{project.pct}%</span>
+                        <span class="nm">{project.name}</span>
+                        <span class="meta">{project.nearestDeadline ? project.nearestDeadline.slice(5) : '—'}</span>
+                        <span class="prio">{project.total - project.done} {t(lang, 'home4_left')}</span>
                     </div>
                 {:else}
-                    <div class="row empty-row"><span class="nm">{t(lang, 'home_tasks_empty')}</span></div>
+                    <div class="row empty-row"><span class="nm">{t(lang, 'home_projects_empty')}</span></div>
                 {/each}
             </div>
         </div>
-
-        <div class="q2full">
-            <div class="q2">
-                <div class="q">
-                    <h3>{t(lang, 'home_projects_title')} <span>{projects.length}</span></h3>
-                    {#each projects as project (project.scopeId)}
-                        <div class="row" role="button" tabindex="0" on:click={() => navigate('habit-projects-view')} on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate('habit-projects-view')}>
-                            <span class="st {project.pct >= 50 ? 'ok' : 'plan'}">{project.pct}%</span>
-                            <span class="nm">{project.name}</span>
-                            <span class="meta">{project.nearestDeadline ? project.nearestDeadline.slice(5) : '—'}</span>
-                            <span class="prio">{project.total - project.done} {t(lang, 'home4_left')}</span>
-                        </div>
-                    {:else}
-                        <div class="row empty-row"><span class="nm">{t(lang, 'home_projects_empty')}</span></div>
-                    {/each}
-                </div>
-                <div class="q">
-                    <h3>{t(lang, 'home_library_title')} <span>{media.length}</span></h3>
-                    {#each media as item (item.file.path)}
-                        <div class="row">
-                            <span class="st ok">{item.total ? Math.round(item.progress / item.total * 100) : 0}%</span>
-                            <span class="nm">{item.title}</span>
-                            <span class="meta">{item.progress}/{item.total} {item.unit}</span>
-                            <button class="go-btn" aria-label={t(lang, 'home_continue') + ': ' + item.title} on:click={() => startMedia(item)}>▶</button>
-                        </div>
-                    {:else}
-                        <div class="row empty-row"><span class="nm">{t(lang, 'home_library_empty')}</span></div>
-                    {/each}
-                </div>
+        <div class="pane">
+            <div class="q">
+                <h3>{t(lang, 'home_library_title')} <span>{media.length}</span></h3>
+                {#each media as item (item.file.path)}
+                    <div class="row">
+                        <span class="st ok">{item.total ? Math.round(item.progress / item.total * 100) : 0}%</span>
+                        <span class="nm">{item.title}</span>
+                        <span class="meta">{item.progress}/{item.total} {item.unit}</span>
+                        <button class="go-btn" aria-label={t(lang, 'home_continue') + ': ' + item.title} on:click={() => startMedia(item)}>▶</button>
+                    </div>
+                {:else}
+                    <div class="row empty-row"><span class="nm">{t(lang, 'home_library_empty')}</span></div>
+                {/each}
             </div>
+        </div>
+    </div>
 
     {#if summary}
         <div class="hint">
@@ -266,7 +269,7 @@
 </div>
 
 <style>
-    .home-screen { display:flex; flex-direction:column; gap:0; height:100%; min-height:0; padding:20px 24px; overflow:auto; }
+    .home-screen { display:flex; flex-direction:column; gap:14px; height:100%; min-height:0; padding:20px 24px; overflow:auto; }
     /* command bar */
     .cbar { display:flex; align-items:center; gap:12px; background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:10px; padding:11px 14px; }
     .glyph { width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg, var(--interactive-accent), var(--text-muted)); display:grid; place-items:center; font-weight:700; color:var(--text-on-accent); font-size:12px; flex-shrink:0; }
@@ -284,8 +287,6 @@
     .statusline .ok { color:var(--text-success); }
     .statusline .run { color:var(--text-accent); }
 
-    /* panes */
-    .panes { display:flex; flex-direction:column; gap:14px; }
     .pane { background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:12px; padding:16px; min-width:0; }
 
     /* timer pane */
@@ -323,9 +324,7 @@
     .row[role='button']:hover .nm { color:var(--interactive-accent); }
     .prio { font-family:var(--font-monospace); font-size:10px; color:var(--text-faint); }
     .go-btn { width:24px; height:24px; min-height:0; padding:0; border-radius:6px; border:1px solid var(--background-modifier-border); background:var(--background-secondary); color:var(--text-success); font-size:9px; display:grid; place-items:center; cursor:pointer; box-shadow:none; }
-    .sep { height:1px; background:var(--background-modifier-border); margin:12px 0; }
     .q2full { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-    .q2 { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
 
     .hint { margin-top:13px; text-align:center; font-family:var(--font-monospace); font-size:11px; color:var(--text-muted); }
     .hint b { color:var(--text-normal); font-weight:500; }
@@ -334,7 +333,6 @@
 
     @media (max-width: 860px) {
         .q2full { grid-template-columns:1fr; }
-        .q2 { grid-template-columns:1fr; }
-        .home-screen { padding:14px 16px; }
+            .home-screen { padding:14px 16px; }
     }
 </style>
