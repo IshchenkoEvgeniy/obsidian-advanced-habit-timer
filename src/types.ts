@@ -1,7 +1,6 @@
 import type { Language } from './i18n';
 import type { ProjectScopeDefinition } from './projects/types';
 export type { ProjectScopeDefinition };
-import type { WidgetLayout } from './widgets/types';
 
 export type MediaType = string;
 export type MediaDailyGoalUnit = 'pages' | 'items' | 'episodes' | 'chapters' | 'minutes' | 'hours' | 'lessons' | 'units';
@@ -156,7 +155,6 @@ export interface HabitTimerSettings {
     projShowDates?: boolean;
     projShowPriority?: boolean;
     projShowEstimates?: boolean;
-    widgetLayout?: WidgetLayout;
 }
 
 export const DEFAULT_SETTINGS: HabitTimerSettings = {
@@ -304,5 +302,4 @@ export const DEFAULT_SETTINGS: HabitTimerSettings = {
     projShowDates: true,
     projShowPriority: true,
     projShowEstimates: true,
-    widgetLayout: { widgets: [], refreshIntervalSec: 30 },
 };

@@ -14,8 +14,8 @@ import { TelegramService } from './services/telegram-service';
 import { calculateHabitStreak } from './services/habit-service';
 import { DailyNoteService } from './services/daily-note-service';
 import { CloudflareCompanionService } from './services/cloudflare-companion-service';
-import { WidgetDashboardView, VIEW_TYPE_WIDGETS } from './widgets/widget-dashboard-view';
-import { WorkspaceOverview, VIEW_TYPE_OVERVIEW } from './workspace-overview';
+import HomeApp from './components/home/HomeApp.svelte';
+import { HomeView, VIEW_TYPE_HOME } from './home-view';
 const VIEW_TYPE_TODAY = 'habit-today-view';
 import { TasksService } from './tasks/service';
 import { TasksView, VIEW_TYPE_TASKS } from './tasks/view';
@@ -75,14 +75,13 @@ export default class HabitTimerPlugin extends Plugin {
         this.registerView(VIEW_TYPE_STATS, (leaf) => withWorkspaceNavigation(new StatsView(leaf, this), this));
         this.registerView(VIEW_TYPE_LIBRARY, (leaf) => withWorkspaceNavigation(new LibraryView(leaf, this), this));
         this.registerView(VIEW_TYPE_PROJECTS, (leaf) => withWorkspaceNavigation(new ProjectsView(leaf, this), this));
-        this.registerView(VIEW_TYPE_WIDGETS, (leaf) => withWorkspaceNavigation(new WidgetDashboardView(leaf, this), this));
-        this.registerView(VIEW_TYPE_OVERVIEW, (leaf) => withWorkspaceNavigation(new WorkspaceOverview(leaf, this), this));
+        this.registerView(VIEW_TYPE_HOME, (leaf) => withWorkspaceNavigation(new HomeView(leaf, this), this));
         this.registerView(VIEW_TYPE_TASKS, leaf => withWorkspaceNavigation(new TasksView(leaf, this), this));
         this.addCommand({id:'open-standalone-tasks',name:'Задания',callback:()=>this.activateView(VIEW_TYPE_TASKS)});
         this.app.workspace.onLayoutReady(() => {
             void this.tasks.list().catch(error=>console.error('Task registry update failed',error));
             this.registerInterval(window.setInterval(()=>{void this.tasks.list().catch(error=>console.error('Task daily projection failed',error));},60000));
-            for(const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODAY))void leaf.setViewState({type:VIEW_TYPE_OVERVIEW,active:false});
+            for(const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODAY))void leaf.setViewState({type:VIEW_TYPE_HOME,active:false});
             void this.refreshStaleInteractiveViews();
             this.scheduleDeferredStartup();
         });
@@ -92,8 +91,8 @@ export default class HabitTimerPlugin extends Plugin {
         
         this.addCommand({
             id: 'open-today-dashboard',
-            name: this.settings.language === 'ru' ? 'Открыть обзор Focus Library' : 'Open Focus Library overview',
-            callback: () => this.activateView(VIEW_TYPE_OVERVIEW, true)
+            name: this.settings.language === 'ru' ? 'Открыть экран Сегодня' : 'Open Today screen',
+            callback: () => this.activateView(VIEW_TYPE_HOME, true)
         });
 
         this.addCommand({
@@ -201,11 +200,11 @@ export default class HabitTimerPlugin extends Plugin {
         const workspace=this.app.workspace;
         if(this.focusLeaf && WORKSPACE_SECTIONS.some(s=>workspace.getLeavesOfType(s.type).includes(this.focusLeaf!))){await workspace.revealLeaf(this.focusLeaf);return;}
         this.focusLeaf = Platform.isMobile ? workspace.getLeaf('tab') : workspace.openPopoutLeaf();
-        await this.focusLeaf.setViewState({type:VIEW_TYPE_OVERVIEW,active:true});
+        await this.focusLeaf.setViewState({type:VIEW_TYPE_HOME,active:true});
         await workspace.revealLeaf(this.focusLeaf);
     }
     async activateView(viewType: string, mainArea = false) {
-        if(viewType===VIEW_TYPE_TODAY)viewType=VIEW_TYPE_OVERVIEW;
+        if(viewType===VIEW_TYPE_TODAY)viewType=VIEW_TYPE_HOME;
         const { workspace } = this.app;
         const sections = new Set<string>(WORKSPACE_SECTIONS.map(section=>section.type));
         const currentLeaf = workspace.getMostRecentLeaf();
@@ -238,7 +237,7 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     private isStaleInteractiveView(viewType: string, leaf: WorkspaceLeaf): boolean {
-        if (viewType === VIEW_TYPE_OVERVIEW) return !(leaf.view instanceof WorkspaceOverview);
+        if (viewType === VIEW_TYPE_HOME) return !(leaf.view instanceof HomeView);
         if (viewType === VIEW_TYPE_TIMER) return !(leaf.view instanceof TimerView);
         return false;
     }
@@ -254,7 +253,7 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     private async refreshStaleInteractiveViews(): Promise<void> {
-        for (const viewType of [VIEW_TYPE_OVERVIEW, VIEW_TYPE_TIMER]) {
+        for (const viewType of [VIEW_TYPE_HOME, VIEW_TYPE_TIMER]) {
             for (const leaf of this.app.workspace.getLeavesOfType(viewType)) {
                 if (this.isStaleInteractiveView(viewType, leaf)) {
                     await this.recreateView(leaf, viewType);

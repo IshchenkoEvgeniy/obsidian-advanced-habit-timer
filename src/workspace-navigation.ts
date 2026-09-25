@@ -2,13 +2,12 @@ import { Notice, setIcon, type ItemView } from 'obsidian';
 import type HabitTimerPlugin from './main';
 
 export const WORKSPACE_SECTIONS = [
-    {type:'habit-workspace-overview', label:'Обзор', en:'Overview', icon:'house'},
+    {type:'habit-home-view', label:'Сегодня', en:'Today', icon:'house'},
     {type:'habit-timer-view', label:'Таймер и привычки', en:'Timer & habits', icon:'timer'},
     {type:'habit-standalone-tasks', label:'Задания', en:'Tasks', icon:'list-checks'},
     {type:'habit-projects-view', label:'Проекты', en:'Projects', icon:'columns-3'},
     {type:'habit-library-view', label:'Библиотека', en:'Library', icon:'library'},
     {type:'habit-timer-stats-view', label:'Статистика', en:'Statistics', icon:'chart-no-axes-combined'},
-    {type:'habit-timer-widget-dashboard', label:'Виджеты', en:'Widgets', icon:'layout-dashboard'}
 ] as const;
 
 /** Keep the real ItemView lifecycle and content element intact for each existing section. */
@@ -50,7 +49,7 @@ export function withWorkspaceNavigation<T extends ItemView>(view:T, plugin:Habit
             console.error('Focus Library section initialization failed',view.getViewType(),error);
             const content=view.containerEl.children[1] as HTMLElement;
             const message=content.createDiv({cls:'fl-section-error',attr:{role:'alert'}});
-            message.createEl('p',{text:ru?'Не удалось загрузить раздел. Можно вернуться в обзор через меню.':'Section could not load. Use the menu to return to the overview.'});
+            message.createEl('p',{text:ru?'Не удалось загрузить раздел. Можно вернуться на главный экран через меню.':'Section could not load. Use the menu to return to the Today screen.'});
             message.createEl('small',{text:error instanceof Error?error.message:String(error)});
         }
     };

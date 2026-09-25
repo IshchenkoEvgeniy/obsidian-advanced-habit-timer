@@ -8,11 +8,10 @@ English summary below ↓
 
 - **⏱ Таймер и привычки** — секундомер и Pomodoro, цели по привычкам, музыкальный плеер для фокус-сессий, сохранение и восстановление сессий.
 - **✅ Задания** — ежедневное планирование задач, повторяющиеся задачи, реестр выполненных в ежедневных заметках, перенос незавершённых.
-- **📋 Проекты** — доска (kanban), таблица, календарь и canvas-доска; подзадачи, метрики дашборда, экспорт в Obsidian Canvas.
+- **📋 Проекты** — доска (kanban), таблица, календарь, дашборд, галерея и таймлайн; подзадачи, прогресс и быстрые действия.
 - **📚 Библиотека** — трекинг медиа (книги, манга и свои коллекции): прогресс, рейтинги, серии, цели на год, темп чтения, таймлайн.
 - **📊 Статистика** — тепловые карты за год, стрики, детальная аналитика, геймификация (достижения и уровни).
-- **🧩 Виджеты** — дашборд с виджетами: стрик, живой таймер, тепловая карта, сводка статистики, мини-бейдж, глобальная цель.
-- **🗂 Рабочая область** — единая навигация между разделами: Обзор, Таймер, Задания, Проекты, Библиотека, Статистика, Виджеты.
+- **🗂 Рабочая область** — единая навигация между разделами: Сегодня, Таймер, Задания, Проекты, Библиотека, Статистика.
 - **💬 Telegram** — бот с живыми уведомлениями таймера, утренним планом и вечерней сводкой, недельным отчётом, управлением таймером из чата и Mini WebApp.
 - **☁️ Cloudflare-компаньон** (опционально) — синхронизация задач и библиотеки через Workers + D1, обложки в R2, веб-приложение с авторизацией через Telegram.
 - **🗓 Ежедневные заметки** — лог сессий и задач в ваших daily notes.
@@ -61,7 +60,7 @@ npm run build
 
 ## English (summary)
 
-Obsidian plugin: focus timer (stopwatch/Pomodoro) with habit tracking, daily tasks, projects (kanban/table/calendar/canvas), media library with reading goals, statistics with heatmaps and gamification, a dashboard of widgets, Telegram bot with briefings and a Mini WebApp, and an optional Cloudflare Workers companion for sync. Russian/English UI.
+Obsidian plugin: focus timer (stopwatch/Pomodoro) with habit tracking, daily tasks, projects (kanban/table/calendar/canvas), media library with reading goals, statistics with heatmaps and gamification, projects (kanban/table/calendar/dashboard/gallery/timeline), a Today home screen, Telegram bot with briefings and a Mini WebApp, and an optional Cloudflare Workers companion for sync. Russian/English UI.
 
 ## Лицензия
 
