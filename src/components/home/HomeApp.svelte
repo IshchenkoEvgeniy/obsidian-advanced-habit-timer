@@ -182,8 +182,7 @@
         <span>·</span><span>{t(lang, 'home4_streak')}: {streak}d</span>
     </div>
 
-    <div class="panes">
-        <div class="pane timer-pane">
+    <div class="pane timer-pane">
             <div class="timer">
                 <div class="t">{activeTimer ? fmtClock(activeTimerSeconds) : '00:00'}</div>
                 <div class="what">{activeTimer ? `${activeTimer.habitName} · ${timerStateLabel}` : t(lang, 'home4_timer_idle')}</div>
@@ -211,9 +210,9 @@
                     <p class="empty">{t(lang, 'home_habits_empty')}</p>
                 {/each}
             </div>
-        </div>
+        </div></div>
 
-        <div class="pane">
+        <div class="pane tasks-pane">
             <div class="q">
                 <h3>{t(lang, 'home4_queue_tasks')} <span>{nearest.length} · {doneCount} {t(lang, 'home4_done')}</span></h3>
                 {#each nearest as task (task.name + task.sortKey)}
@@ -227,9 +226,9 @@
                     <div class="row empty-row"><span class="nm">{t(lang, 'home_tasks_empty')}</span></div>
                 {/each}
             </div>
+        </div>
 
-            <div class="sep"></div>
-
+        <div class="q2full">
             <div class="q2">
                 <div class="q">
                     <h3>{t(lang, 'home_projects_title')} <span>{projects.length}</span></h3>
@@ -258,8 +257,6 @@
                     {/each}
                 </div>
             </div>
-        </div>
-    </div>
 
     {#if summary}
         <div class="hint">
@@ -288,12 +285,12 @@
     .statusline .run { color:var(--text-accent); }
 
     /* panes */
-    .panes { display:grid; grid-template-columns:300px minmax(0,1fr); gap:14px; }
+    .panes { display:flex; flex-direction:column; gap:14px; }
     .pane { background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:12px; padding:16px; min-width:0; }
 
     /* timer pane */
-    .timer { text-align:center; padding:16px 0 8px; }
-    .timer .t { font-family:var(--font-monospace); font-size:40px; color:var(--text-normal); font-weight:400; font-variant-numeric:tabular-nums; line-height:1.1; }
+    .timer { text-align:center; padding:26px 0 10px; }
+    .timer .t { font-family:var(--font-monospace); font-size:56px; color:var(--text-normal); font-weight:400; font-variant-numeric:tabular-nums; line-height:1.1; }
     .timer .what { color:var(--text-muted); font-size:12.5px; margin-top:4px; }
     .btns { display:flex; gap:8px; justify-content:center; margin-top:16px; flex-wrap:wrap; }
     .btns button { font-family:var(--font-monospace); font-size:12px; background:var(--background-secondary); color:var(--text-normal); border:1px solid var(--background-modifier-border); border-radius:7px; padding:7px 14px; cursor:pointer; transition:border-color .12s, color .12s; }
@@ -311,7 +308,7 @@
     /* queues */
     .q h3 { font-family:var(--font-monospace); font-size:10.5px; color:var(--text-faint); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:9px; display:flex; justify-content:space-between; align-items:baseline; }
     .q h3 span { color:var(--text-success); font-weight:400; }
-    .row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; gap:11px; align-items:center; padding:7px 9px; border-radius:7px; font-size:13px; cursor:default; }
+    .row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; gap:14px; align-items:center; padding:8px 11px; border-radius:7px; font-size:13.5px; cursor:default; }
     .row:nth-child(odd) { background:var(--background-secondary); }
     .row.empty-row { grid-template-columns:1fr; color:var(--text-faint); display:flex; }
     .row .st { font-family:var(--font-monospace); font-size:9.5px; padding:2px 7px; border-radius:4px; letter-spacing:0.04em; text-transform:uppercase; justify-self:start; }
@@ -327,6 +324,7 @@
     .prio { font-family:var(--font-monospace); font-size:10px; color:var(--text-faint); }
     .go-btn { width:24px; height:24px; min-height:0; padding:0; border-radius:6px; border:1px solid var(--background-modifier-border); background:var(--background-secondary); color:var(--text-success); font-size:9px; display:grid; place-items:center; cursor:pointer; box-shadow:none; }
     .sep { height:1px; background:var(--background-modifier-border); margin:12px 0; }
+    .q2full { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
     .q2 { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
 
     .hint { margin-top:13px; text-align:center; font-family:var(--font-monospace); font-size:11px; color:var(--text-muted); }
@@ -335,7 +333,7 @@
     .empty { color:var(--text-faint); font-size:12.5px; }
 
     @media (max-width: 860px) {
-        .panes { grid-template-columns:1fr; }
+        .q2full { grid-template-columns:1fr; }
         .q2 { grid-template-columns:1fr; }
         .home-screen { padding:14px 16px; }
     }
