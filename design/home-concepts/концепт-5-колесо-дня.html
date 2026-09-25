@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Концепт 5 — Колесо дня</title>
+<!-- авторская концепция: радиальный циферблат дня в центре, орбиты задач вокруг; тёплая тёмная тема -->
+<style>
+    :root{
+        --bg:#141216; --s1:#1d1a21; --s2:#262230; --line:rgba(255,255,255,0.09);
+        --txt:#f2eef5; --txt2:#cfc6d8; --mut:#948b9f; --dim:#6b6376;
+        --accent:#e8a04c; --accent2:#c9832e; --teal:#5bc8af; --rose:#e77c9d; --blue:#7aa5e0;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:radial-gradient(1200px 700px at 70% -10%,#241f2c 0%,var(--bg) 55%);color:var(--txt2);font:400 14.5px/1.55 Inter,-apple-system,'Segoe UI',system-ui,sans-serif;padding:30px 34px;min-height:100vh}
+    .cap{max-width:1120px;margin:0 auto}
+    .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .head h1{font-size:21px;font-weight:600;color:var(--txt);letter-spacing:-0.2px}
+    .head .d{color:var(--mut);font-size:13px}
+    /* dial layout */
+    .dial-wrap{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:30px;align-items:center;margin-top:10px}
+    /* the dial */
+    .dial{position:relative;aspect-ratio:1;max-width:420px;margin:0 auto}
+    .dial svg{width:100%;height:100%;transform:rotate(-90deg)}
+    .dial .center{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+    .center .big{font-size:34px;font-weight:600;color:var(--txt);letter-spacing:-0.4px;font-variant-numeric:tabular-nums}
+    .center .lbl{color:var(--mut);font-size:12.5px;margin-top:3px}
+    .center .st{display:inline-flex;align-items:center;gap:7px;margin-top:12px;background:var(--s2);border:1px solid var(--line);padding:7px 16px;border-radius:9999px;font-size:12.5px;color:var(--txt)}
+    .center .st i{width:8px;height:8px;border-radius:50%;background:var(--teal);animation:pulse 1.8s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    /* sector legend built into ring via JS-free svg segments */
+    /* right: agenda rail */
+    .rail{display:flex;flex-direction:column;gap:11px}
+    .card{background:var(--s1);border:1px solid var(--line);border-radius:14px;padding:15px 17px}
+    .card h3{font-size:11px;font-weight:600;letter-spacing:0.09em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;display:flex;justify-content:space-between}
+    .card h3 b{color:var(--accent);font-weight:600}
+    .seg{display:flex;align-items:center;gap:11px;padding:7px 0;border-bottom:1px dashed rgba(255,255,255,0.07)}
+    .seg:last-child{border-bottom:0}
+    .seg .k{width:9px;height:9px;border-radius:3px;flex-shrink:0}
+    .seg .t{flex:1;min-width:0;color:var(--txt);font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .seg .t.over{color:var(--rose)}
+    .seg .m{font-size:11.5px;color:var(--mut);font-variant-numeric:tabular-nums}
+    .seg .act{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:7px;padding:3px 9px;cursor:default}
+    .seg .act:hover{color:var(--accent);border-color:var(--accent2)}
+    /* insights strip */
+    .insights{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:4px}
+    .ins{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+    .ins .v{font-size:20px;font-weight:600;color:var(--txt);font-variant-numeric:tabular-nums}
+    .ins .v em{font-style:normal;font-size:12px;color:var(--mut);font-weight:400;margin-left:4px}
+    .ins .k{font-size:11px;color:var(--dim);margin-top:2px}
+    .ins .trend{font-size:11px;margin-top:6px;color:var(--teal)}
+    .ins .trend.warn{color:var(--accent)}
+    @media (max-width:880px){.dial-wrap{grid-template-columns:1fr}.insights{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="cap">
+    <div class="head">
+        <h1>Колесо дня</h1>
+        <span class="d">четверг · 25 сентября 2026</span>
+    </div>
+
+    <div class="dial-wrap">
+        <!-- Dial: today's goal fulfillment as ring sectors -->
+        <div class="dial" role="img" aria-label="Дневные цели: чтение 80%, английский 97%, программирование 22%">
+            <svg viewBox="0 0 200 200" aria-hidden="true">
+                <!-- base ring -->
+                <circle cx="100" cy="100" r="86" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="13"/>
+                <!-- habit sectors: reading 80% of 120deg, english 97% of 120deg, programming 22% of 120deg -->
+                <circle cx="100" cy="100" r="86" fill="none" stroke="var(--teal)" stroke-width="13" stroke-dasharray="361.7 540.4" stroke-dashoffset="0" pathLength="540.4" stroke-linecap="round"/>
+                <circle cx="100" cy="100" r="86" fill="none" stroke="var(--blue)" stroke-width="13" stroke-dasharray="349.7 540.4" stroke-dashoffset="-440.4" pathLength="540.4" stroke-linecap="round"/>
+                <circle cx="100" cy="100" r="86" fill="none" stroke="var(--accent)" stroke-width="13" stroke-dasharray="79.3 540.4" stroke-dashoffset="-880.4" pathLength="540.4" stroke-linecap="round"/>
+                <!-- inner task ring: 5 done of 7 -->
+                <circle cx="100" cy="100" r="64" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="7"/>
+                <circle cx="100" cy="100" r="64" fill="none" stroke="var(--rose)" stroke-width="7" stroke-dasharray="286.6 402.1" pathLength="402.1"/>
+                <circle cx="100" cy="100" r="64" fill="none" stroke="rgba(242,238,245,0.5)" stroke-width="7" stroke-dasharray="115.5 402.1" stroke-dashoffset="-286.6" pathLength="402.1"/>
+            </svg>
+            <div class="center">
+                <div>
+                    <div class="big">01:12:44</div>
+                    <div class="lbl">фокус сегодня · чтение</div>
+                    <div class="st"><i></i>сессия идёт</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="rail">
+            <div class="card">
+                <h3>СЕКТОРЫ ДНЯ <b>2/3 цели</b></h3>
+                <div class="seg"><span class="k" style="background:var(--teal)"></span><span class="t">Чтение</span><span class="m">1:12 / 1:30</span><span class="act">+18 мин до цели</span></div>
+                <div class="seg"><span class="k" style="background:var(--blue)"></span><span class="t">Английский</span><span class="m">0:58 / 1:00</span><span class="act">закрыто</span></div>
+                <div class="seg"><span class="k" style="background:var(--accent)"></span><span class="t">Программирование</span><span class="m">0:26 / 2:00</span><span class="act">старт</span></div>
+            </div>
+            <div class="card">
+                <h3>ВНЕШНЕЕ КОЛЬЦО — ЗАДАНИЯ <b>1 просрочено</b></h3>
+                <div class="seg"><span class="k" style="background:var(--rose)"></span><span class="t over">Сдать отчёт по проекту</span><span class="m">было 24.09</span><span class="act">открыть</span></div>
+                <div class="seg"><span class="k" style="background:rgba(242,238,245,0.5)"></span><span class="t">Разобрать входящие заметки</span><span class="m">сегодня</span><span class="act">открыть</span></div>
+                <div class="seg"><span class="k" style="background:rgba(242,238,245,0.5)"></span><span class="t">Рецензия на главу 4</span><span class="m">26.09</span><span class="act">открыть</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="insights">
+        <div class="ins">
+            <div class="v">64<em>%</em></div>
+            <div class="k">Сайт-портфолио · срок 30.09</div>
+            <div class="trend">в графике — осталось 4 задачи</div>
+        </div>
+        <div class="ins">
+            <div class="v">31<em>%</em></div>
+            <div class="k">Курс по геймдизайну · срок 12.10</div>
+            <div class="trend warn">отстаёт на 2 задачи</div>
+        </div>
+        <div class="ins">
+            <div class="v">210<em>/340 стр</em></div>
+            <div class="k">Кровь и железо · 62%</div>
+            <div class="trend">34 страницы сегодня — личный рекорд недели</div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

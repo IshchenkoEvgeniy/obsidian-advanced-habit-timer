@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Концепт 1 — Фокус-команда</title>
+<!-- design-system: linear-app (тёмная тема, интерьер #0f1011/#191a1b, акцент #7170ff, вес 510) -->
+<style>
+    :root{
+        --bg:#0f1011; --surface:#191a1b; --surface2:#28282c;
+        --text:#f7f8f8; --text2:#d0d6e0; --muted:#8a8f98; --faint:#62666d;
+        --border:rgba(255,255,255,0.08); --border2:rgba(255,255,255,0.05);
+        --accent:#7170ff; --accent-bg:#5e6ad2; --green:#10b981; --red:#ff6363; --orange:#ffbc33;
+        --mono:ui-monospace,'SF Mono',Menlo,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text2);font:400 15px/1.6 Inter,-apple-system,'Segoe UI',system-ui,sans-serif;padding:28px 32px;}
+    .cap{max-width:1180px;margin:0 auto;}
+    /* greeting row */
+    .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px}
+    .top h1{font-size:30px;font-weight:590;letter-spacing:-0.45px;color:var(--text);line-height:1.15}
+    .top .sub{color:var(--muted);font-size:13.5px;margin-top:3px}
+    .timerbox{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 18px}
+    .timerbox .dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+    .timerbox .time{font-family:var(--mono);font-size:22px;color:var(--text);font-weight:400}
+    .timerbox .what{font-size:12.5px;color:var(--muted)}
+    .timerbox button{background:var(--accent-bg);color:#fff;border:0;border-radius:8px;padding:8px 16px;font:inherit;font-size:13px;font-weight:510;cursor:pointer}
+    /* 3-col command grid */
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+    .card{background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:12px;padding:18px;transition:background .15s}
+    .card:hover{background:rgba(255,255,255,0.04)}
+    .card h2{font-size:13px;font-weight:510;color:var(--muted);letter-spacing:0.02em;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+    .card h2 .go{color:var(--faint);font-family:var(--mono);font-size:12px;cursor:default}
+    /* habit rows */
+    .hab{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:9px 0;border-bottom:1px solid var(--border2)}
+    .hab:last-of-type{border-bottom:0}
+    .hab .nm{color:var(--text);font-size:14px;font-weight:510}
+    .hab .val{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+    .hab .bar{grid-column:1/-1;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden}
+    .hab .bar i{display:block;height:100%;background:var(--accent);border-radius:2px}
+    .hab .bar i.g{background:var(--green)}
+    /* tasks */
+    .task{display:flex;gap:11px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border2)}
+    .task:last-of-type{border-bottom:0}
+    .task .cb{width:15px;height:15px;border:1px solid var(--faint);border-radius:4px;margin-top:3px;flex-shrink:0}
+    .task .nm{font-size:14px;color:var(--text);font-weight:510}
+    .task.over .nm{color:var(--red)}
+    .task .dt{font-size:12px;color:var(--muted);font-family:var(--mono)}
+    .task.over .dt{color:var(--red)}
+    .pill{font-size:10.5px;font-weight:510;padding:1px 8px;border-radius:9999px;border:1px solid var(--border);color:var(--muted)}
+    .pill.hi{color:var(--red);border-color:rgba(255,99,99,0.4)}
+    /* projects */
+    .prj{padding:11px 12px;border:1px solid var(--border2);border-radius:9px;margin-bottom:8px;background:rgba(255,255,255,0.015)}
+    .prj:last-child{margin-bottom:0}
+    .prj .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+    .prj .nm{font-size:13.5px;color:var(--text);font-weight:510}
+    .prj .pct{font-family:var(--mono);font-size:12px;color:var(--muted)}
+    .prj .bar{height:3px;background:rgba(255,255,255,0.06);border-radius:2px}
+    .prj .bar i{display:block;height:100%;border-radius:2px;background:var(--accent)}
+    .prj .dl{font-size:11.5px;color:var(--faint);margin-top:6px;font-family:var(--mono)}
+    /* footer strip */
+    .strip{margin-top:16px;display:flex;gap:28px;align-items:center;border:1px solid var(--border2);border-radius:12px;padding:13px 20px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+    .strip b{color:var(--text);font-weight:400}
+    .strip .sp{flex:1}
+    @media (max-width:900px){.grid{grid-template-columns:1fr}.top{flex-direction:column;align-items:flex-start}}
+</style>
+</head>
+<body>
+<div class="cap">
+    <div class="top">
+        <div>
+            <h1>Добрый вечер, Евгений</h1>
+            <div class="sub">Четверг, 25 сентября · 3 привычки на плане · 2 задания ждут</div>
+        </div>
+        <div class="timerbox">
+            <span class="dot"></span>
+            <div><div class="time" id="tm">00:42:17</div><div class="what">Чтение · идёт сессия</div></div>
+            <button>Открыть таймер</button>
+        </div>
+    </div>
+
+    <div class="grid">
+        <section class="card" aria-label="Привычки">
+            <h2>ПРИВЫЧКИ СЕГОДНЯ <span class="go">2/3</span></h2>
+            <div class="hab">
+                <span class="nm">Чтение</span><span class="val">1:12 / 1:30</span>
+                <div class="bar"><i class="g" style="width:80%"></i></div>
+            </div>
+            <div class="hab">
+                <span class="nm">Английский</span><span class="val">0:58 / 1:00</span>
+                <div class="bar"><i class="g" style="width:97%"></i></div>
+            </div>
+            <div class="hab">
+                <span class="nm">Программирование</span><span class="val">0:26 / 2:00</span>
+                <div class="bar"><i style="width:22%"></i></div>
+            </div>
+        </section>
+
+        <section class="card" aria-label="Задания">
+            <h2>ЗАДАНИЯ <span class="go">ближайшие</span></h2>
+            <div class="task over">
+                <span class="cb"></span>
+                <div><div class="nm">Сдать отчёт по проекту</div><span class="dt">24.09 · просрочено</span></div>
+                <span class="pill hi">high</span>
+            </div>
+            <div class="task">
+                <span class="cb"></span>
+                <div><div class="nm">Разобрать входящие заметки</div><span class="dt">сегодня</span></div>
+            </div>
+            <div class="task">
+                <span class="cb"></span>
+                <div><div class="nm">Рецензия на главу 4</div><span class="dt">26.09</span></div>
+                <span class="pill">med</span>
+            </div>
+            <div class="task">
+                <span class="cb"></span>
+                <div><div class="nm">Заказать обложку</div><span class="dt">28.09</span></div>
+            </div>
+        </section>
+
+        <section class="card" aria-label="Проекты">
+            <h2>ПРОЕКТЫ <span class="go">2 активных</span></h2>
+            <div class="prj">
+                <div class="row"><span class="nm">Сайт-портфолио</span><span class="pct">64%</span></div>
+                <div class="bar"><i style="width:64%"></i></div>
+                <div class="dl">срок 30.09 · 4 задачи осталось</div>
+            </div>
+            <div class="prj">
+                <div class="row"><span class="nm">Курс по геймдизайну</span><span class="pct">31%</span></div>
+                <div class="bar"><i style="width:31%"></i></div>
+                <div class="dl">срок 12.10 · 11 задач осталось</div>
+            </div>
+        </section>
+    </div>
+
+    <div class="strip">
+        <span>сегодня: <b>2:36</b> фокуса</span>
+        <span>выполнено: <b>5</b> заданий</span>
+        <span>страниц: <b>34</b></span>
+        <span class="sp"></span>
+        <span>streak <b>12</b> дней</span>
+    </div>
+</div>
+<script>
+    // живой тикающий таймер для правдоподобия (в плагине — реальная сессия)
+    let s = 42*60+17;
+    const el = document.getElementById('tm');
+    setInterval(() => { s++; const h=String(Math.floor(s/3600)).padStart(2,'0'), m=String(Math.floor(s%3600/60)).padStart(2,'0'), x=String(s%60).padStart(2,'0'); el.textContent = h+':'+m+':'+x; }, 1000);
+</script>
+</body>
+</html>

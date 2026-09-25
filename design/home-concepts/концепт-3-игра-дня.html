@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Концепт 3 — Игра дня</title>
+<!-- design-system: duolingo (сова-зелёный #58cc02, chunky 4px тени, жирные скругления, геймификация) -->
+<style>
+    :root{
+        --bg:#ffffff; --soft:#f7f7f7; --line:#e5e5e5; --ink:#3c3c3c; --mut:#777777; --dis:#afafaf;
+        --green:#58cc02; --green-d:#58a700; --green-l:#89e219; --green-p:#dbf8c5;
+        --orange:#ff9600; --pink:#ce82ff; --blue:#1cb0f6; --red:#ff4b4b; --yellow:#ffc800;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--ink);font:500 15px/1.5 'DIN Round Pro','Mona Sans','Helvetica Neue',system-ui,sans-serif;padding:26px 30px}
+    .cap{max-width:1060px;margin:0 auto}
+    /* top stats bar like duolingo header */
+    .stats{display:flex;align-items:center;gap:22px;margin-bottom:22px;flex-wrap:wrap}
+    .stats .streak{display:flex;align-items:center;gap:7px;font-weight:800;font-size:20px;color:var(--orange)}
+    .stats .streak .fl{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid var(--orange);position:relative}
+    .stats .streak .fl::after{content:'';position:absolute;left:-3px;top:4px;width:6px;height:6px;background:var(--yellow);border-radius:50%}
+    .stats .gems{display:flex;align-items:center;gap:6px;font-weight:800;font-size:18px;color:var(--pink)}
+    .stats .gems i{width:14px;height:14px;background:var(--pink);border-radius:3px;transform:rotate(45deg)}
+    .stats .day{font-size:15px;font-weight:700;color:var(--mut);margin-left:auto}
+    /* hero quest banner */
+    .quest{background:var(--green-p);border:2px solid var(--line);border-bottom:4px solid #c9dfa8;border-radius:16px;padding:18px 22px;display:flex;align-items:center;gap:18px;margin-bottom:20px}
+    .quest .owl{width:54px;height:54px;border-radius:50%;background:var(--green);flex-shrink:0;display:grid;place-items:center}
+    .quest .owl::after{content:'';width:22px;height:22px;border-radius:50% 50% 50% 0;background:#fff}
+    .quest .body{flex:1}
+    .quest .body h1{font-size:22px;font-weight:800;color:var(--ink);margin-bottom:4px}
+    .quest .body p{color:var(--mut);font-size:14px}
+    .quest .go{background:var(--green);color:#fff;border:0;border-bottom:4px solid var(--green-d);border-radius:14px;padding:12px 26px;font:800 15px inherit;font-family:inherit;cursor:pointer;transition:transform .05s}
+    .quest .go:active{transform:translateY(3px);border-bottom-width:1px}
+    /* lesson path cards */
+    .units{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+    .unit h2{font-size:16px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px}
+    .lesson{display:flex;align-items:center;gap:14px;background:#fff;border:2px solid var(--line);border-bottom:4px solid var(--line);border-radius:14px;padding:13px 16px;margin-bottom:10px;transition:transform .05s;cursor:pointer}
+    .lesson:hover{border-color:#d0d0d0}
+    .lesson:active{transform:translateY(2px)}
+    .lesson .ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex-shrink:0;font-size:20px;font-weight:800;color:#fff}
+    .lesson .ico.g{background:var(--green)}
+    .lesson .ico.b{background:var(--blue)}
+    .lesson .ico.o{background:var(--orange)}
+    .lesson .ico.p{background:var(--pink)}
+    .lesson .body{flex:1;min-width:0}
+    .lesson .body .t{font-weight:800;font-size:15.5px}
+    .lesson .body .s{font-size:12.5px;color:var(--mut);font-weight:600}
+    .lesson .body .bar{margin-top:6px;height:12px;background:var(--soft);border:2px solid var(--line);border-radius:9999px;overflow:hidden}
+    .lesson .body .bar i{display:block;height:100%;background:var(--green);border-radius:9999px}
+    .lesson .xp{font-weight:800;color:var(--green);font-size:14px;flex-shrink:0}
+    .lesson.over{border-color:var(--red);border-bottom-color:var(--red)}
+    .lesson.over .xp{color:var(--red)}
+    .lesson .ico.r{background:var(--red)}
+    /* weekly ring row */
+    .weekrow{margin-top:6px;background:var(--soft);border:2px solid var(--line);border-radius:16px;padding:16px 20px;display:flex;align-items:center;gap:14px}
+    .weekrow .lbl{font-weight:800;font-size:14px;color:var(--mut);text-transform:uppercase;letter-spacing:0.03em}
+    .weekrow .d{width:38px;height:38px;border-radius:12px;border:2px solid var(--line);display:grid;place-items:center;font-weight:800;color:var(--dis);background:#fff;font-size:13px}
+    .weekrow .d.done{background:var(--green);border-color:var(--green-d);color:#fff}
+    .weekrow .d.now{border-color:var(--green);color:var(--green);border-width:3px}
+    @media (max-width:820px){.units{grid-template-columns:1fr}.stats .day{margin-left:0;width:100%}}
+</style>
+</head>
+<body>
+<div class="cap">
+    <div class="stats">
+        <span class="streak"><span class="fl"></span>12</span>
+        <span class="gems"><i></i>1 240</span>
+        <span class="streak" style="color:var(--blue);font-size:15px">🏆 3 достижения за неделю</span>
+        <span class="day">Четверг, 25 сентября</span>
+    </div>
+
+    <div class="quest">
+        <div class="owl"></div>
+        <div class="body">
+            <h1>Сегодняшний квест: добей Programming!</h1>
+            <p>Осталось 1 час 34 минуты — и дневная цель закрыта. Три дня подряд выполняешь — не останавливайся!</p>
+        </div>
+        <button class="go">Начать урок</button>
+    </div>
+
+    <div class="units">
+        <div class="unit">
+            <h2>Привычки · 2 из 3</h2>
+            <div class="lesson">
+                <span class="ico g">Кн</span>
+                <div class="body"><div class="t">Чтение</div><div class="s">1:12 из 1:30</div><div class="bar"><i style="width:80%"></i></div></div>
+                <span class="xp">+10 XP до цели</span>
+            </div>
+            <div class="lesson">
+                <span class="ico b">En</span>
+                <div class="body"><div class="t">Английский</div><div class="s">0:58 из 1:00 · почти!</div><div class="bar"><i style="width:97%"></i></div></div>
+                <span class="xp">выполнено</span>
+            </div>
+            <div class="lesson">
+                <span class="ico o">&lt;/&gt;</span>
+                <div class="body"><div class="t">Программирование</div><div class="s">0:26 из 2:00</div><div class="bar"><i style="width:22%"></i></div></div>
+                <span class="xp">квест!</span>
+            </div>
+        </div>
+
+        <div class="unit">
+            <h2>Задания</h2>
+            <div class="lesson over">
+                <span class="ico r">!</span>
+                <div class="body"><div class="t">Сдать отчёт по проекту</div><div class="s">просрочено · было 24.09</div></div>
+                <span class="xp">+50 XP</span>
+            </div>
+            <div class="lesson">
+                <span class="ico p">✎</span>
+                <div class="body"><div class="t">Разобрать входящие заметки</div><div class="s">сегодня</div></div>
+                <span class="xp">+10 XP</span>
+            </div>
+            <div class="lesson">
+                <span class="ico p">✎</span>
+                <div class="body"><div class="t">Рецензия на главу 4</div><div class="s">26.09</div></div>
+                <span class="xp">+20 XP</span>
+            </div>
+        </div>
+
+        <div class="unit">
+            <h2>Проекты</h2>
+            <div class="lesson">
+                <span class="ico b">🌐</span>
+                <div class="body"><div class="t">Сайт-портфолио</div><div class="s">4 задачи до финиша</div><div class="bar"><i style="width:64%"></i></div></div>
+                <span class="xp">64%</span>
+            </div>
+            <div class="lesson">
+                <span class="ico o">🎮</span>
+                <div class="body"><div class="t">Курс по геймдизайну</div><div class="s">11 задач · срок 12.10</div><div class="bar"><i style="width:31%"></i></div></div>
+                <span class="xp">31%</span>
+            </div>
+        </div>
+
+        <div class="unit">
+            <h2>Продолжить</h2>
+            <div class="lesson">
+                <span class="ico g">📖</span>
+                <div class="body"><div class="t">Кровь и железо</div><div class="s">стр. 210 из 340</div><div class="bar"><i style="width:62%"></i></div></div>
+                <span class="xp">+2 XP/стр</span>
+            </div>
+            <div class="lesson">
+                <span class="ico p">🦉</span>
+                <div class="body"><div class="t">Остров Потрохов</div><div class="s">глава 7 из 24</div><div class="bar"><i style="width:29%"></i></div></div>
+                <span class="xp">+5 XP/гл</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="weekrow">
+        <span class="lbl">Неделя:</span>
+        <span class="d done">П</span><span class="d done">В</span><span class="d done">С</span>
+        <span class="d now">Ч</span>
+        <span class="d">П</span><span class="d">С</span><span class="d">В</span>
+        <span style="flex:1"></span>
+        <span style="font-weight:800;color:var(--green)">2:36 фокуса сегодня</span>
+    </div>
+</div>
+</body>
+</html>

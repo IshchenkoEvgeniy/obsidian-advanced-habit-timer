@@ -531,5 +531,17 @@ export const en = {
     home_summary_prefix: "Today",
     home_summary_timer: "focused",
     home_summary_tasks: "tasks",
-    home_summary_pages: "pages"
+    home_summary_pages: "pages",
+    home4_status_ok: "all in sync",
+    home4_streak: "streak",
+    home4_timer_idle: "timer not running",
+    home4_pause: "pause",
+    home4_resume: "resume",
+    home4_stop: "stop",
+    home4_queue_tasks: "TASK QUEUE",
+    home4_done: "done",
+    home4_today: "today",
+    home4_plan: "plan",
+    home4_left: "left",
+    home4_all_systems: "all systems go"
 }

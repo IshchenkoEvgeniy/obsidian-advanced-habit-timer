@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Концепт 4 — Пульт управления</title>
+<!-- design-system: raycast (почти-чёрный #07080a, моношрифт-акценты, клавиатурные капсулы, статусная строка) -->
+<style>
+    :root{
+        --bg:#07080a; --s1:#101111; --s2:#1b1c1e; --line:#252829; --line2:#2f3031;
+        --txt:#f9f9f9; --txt2:#cecece; --mut:#9c9c9d; --dim:#6a6b6c;
+        --blue:#55b3ff; --green:#5fc992; --yellow:#ffbc33; --red:#FF6363;
+        --mono:GeistMono,ui-monospace,'SF Mono',Menlo,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--txt2);font:400 14px/1.55 Inter,-apple-system,'Segoe UI',system-ui,sans-serif;letter-spacing:0.2px;padding:22px 26px}
+    .cap{max-width:1140px;margin:0 auto}
+    /* command bar top */
+    .cbar{display:flex;align-items:center;gap:12px;background:var(--s1);border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:18px}
+    .cbar .glyph{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#ff6363,#ffbc33);display:grid;place-items:center;font-weight:700;color:#0b0b0c;font-size:13px}
+    .cbar .greet{color:var(--txt);font-weight:500}
+    .cbar .date{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
+    .cbar .sp{flex:1}
+    .kbd{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;color:var(--mut)}
+    .kbd b{background:linear-gradient(180deg,#121212,#0d0d0d);border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;padding:2px 7px;color:var(--txt);font-weight:400}
+    /* status line */
+    .status{display:flex;align-items:center;gap:9px;padding:5px 2px 14px;font-family:var(--mono);font-size:11.5px;color:var(--mut)}
+    .status .ok{color:var(--green)}
+    .status .run{color:var(--blue)}
+    /* two-pane: left rail with big timer, right data */
+    .panes{display:grid;grid-template-columns:320px 1fr;gap:14px}
+    .pane{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:18px}
+    /* big timer block */
+    .timer{text-align:center;padding:22px 0 14px}
+    .timer .t{font-family:var(--mono);font-size:44px;color:var(--txt);letter-spacing:0;font-weight:400}
+    .timer .what{color:var(--mut);font-size:12.5px;margin-top:4px}
+    .timer .btns{display:flex;gap:8px;justify-content:center;margin-top:18px}
+    .timer .btns button{font-family:var(--mono);font-size:12.5px;background:var(--s2);color:var(--txt);border:1px solid var(--line2);border-radius:7px;padding:8px 15px;cursor:pointer}
+    .timer .btns button:hover{border-color:var(--blue);color:var(--blue)}
+    .rings{display:flex;justify-content:space-around;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+    .ring{text-align:center}
+    .ring .c{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;margin:0 auto 7px}
+    .ring .c .in{width:46px;height:46px;border-radius:50%;background:var(--s1);display:grid;place-items:center;font-family:var(--mono);font-size:11px;color:var(--txt)}
+    .ring .lbl{font-size:10.5px;color:var(--dim);font-family:var(--mono);letter-spacing:0.05em}
+    .c.r1{background:conic-gradient(var(--green) 80%,var(--line) 0)}
+    .c.r2{background:conic-gradient(var(--blue) 97%,var(--line) 0)}
+    .c.r3{background:conic-gradient(var(--yellow) 22%,var(--line) 0)}
+    /* right: queues as terminal rows */
+    .q h3{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px;display:flex;justify-content:space-between}
+    .q h3 span{color:var(--green)}
+    .row{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:8px 10px;border-radius:7px;font-size:13px}
+    .row:nth-child(odd){background:rgba(255,255,255,0.02)}
+    .row .st{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:4px;letter-spacing:0.04em}
+    .st.over{background:rgba(255,99,99,0.15);color:var(--red)}
+    .st.now{background:rgba(85,179,255,0.15);color:var(--blue)}
+    .st.ok{background:rgba(95,201,146,0.15);color:var(--green)}
+    .st.plan{background:rgba(255,255,255,0.05);color:var(--mut)}
+    .row .nm{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .row .meta{font-family:var(--mono);font-size:11px;color:var(--dim)}
+    .row .prio{font-family:var(--mono);font-size:10px;color:var(--dim)}
+    .row .prio.hi{color:var(--red)}
+    .sep{height:1px;background:var(--line);margin:13px 0}
+    .q2{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
+    /* bottom command hint */
+    .hint{margin-top:14px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--dim)}
+    .hint b{color:var(--txt);font-weight:400}
+    @media (max-width:860px){.panes{grid-template-columns:1fr}.q2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="cap">
+    <div class="cbar">
+        <span class="glyph">FL</span>
+        <span class="greet">Добрый вечер, Евгений</span>
+        <span class="date">2026-09-25 · чт</span>
+        <span class="sp"></span>
+        <span class="kbd"><b>⌘</b><b>T</b> таймер</span>
+        <span class="kbd"><b>⌘</b><b>K</b> команды</span>
+    </div>
+
+    <div class="status">
+        <span class="ok">●</span><span>companion: sync ok</span>
+        <span>·</span>
+        <span class="run">▶ session: Чтение</span>
+        <span>·</span>
+        <span>streak: 12d</span>
+    </div>
+
+    <div class="panes">
+        <div class="pane timer-pane">
+            <div class="timer">
+                <div class="t" id="tm">01:12:44</div>
+                <div class="what">Чтение · «Кровь и железо»</div>
+                <div class="btns"><button>пауза</button><button>стоп</button></div>
+            </div>
+            <div class="rings">
+                <div class="ring"><div class="c r1"><span class="in">80%</span></div><div class="lbl">ЧТЕНИЕ</div></div>
+                <div class="ring"><div class="c r2"><span class="in">97%</span></div><div class="lbl">АНГЛ</div></div>
+                <div class="ring"><div class="c r3"><span class="in">22%</span></div><div class="lbl">ПРОГР</div></div>
+            </div>
+        </div>
+
+        <div class="pane">
+            <div class="q">
+                <h3>ОЧЕРЕДЬ ЗАДАНИЙ <span>2 открыты · 1 просрочено</span></h3>
+                <div class="row"><span class="st over">OVERDUE</span><span class="nm">Сдать отчёт по проекту</span><span class="meta">24.09</span><span class="prio hi">P1</span></div>
+                <div class="row"><span class="st now">TODAY</span><span class="nm">Разобрать входящие заметки</span><span class="meta">25.09</span><span class="prio">P2</span></div>
+                <div class="row"><span class="st plan">PLAN</span><span class="nm">Рецензия на главу 4</span><span class="meta">26.09</span><span class="prio">P2</span></div>
+                <div class="row"><span class="st plan">PLAN</span><span class="nm">Заказать обложку</span><span class="meta">28.09</span><span class="prio">P3</span></div>
+            </div>
+            <div class="sep"></div>
+            <div class="q2">
+                <div class="q">
+                    <h3>ПРОЕКТЫ <span>2</span></h3>
+                    <div class="row"><span class="st ok">64%</span><span class="nm">Сайт-портфолио</span><span class="meta">30.09</span><span class="prio">4 left</span></div>
+                    <div class="row"><span class="st plan">31%</span><span class="nm">Курс по геймдизайну</span><span class="meta">12.10</span><span class="prio">11 left</span></div>
+                </div>
+                <div class="q">
+                    <h3>БИБЛИОТЕКА <span>в процессе</span></h3>
+                    <div class="row"><span class="st ok">62%</span><span class="nm">Кровь и железо</span><span class="meta">210/340</span><span class="prio">▶</span></div>
+                    <div class="row"><span class="st plan">30%</span><span class="nm">Четыре тысячи недель</span><span class="meta">88/290</span><span class="prio">··</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="hint">сегодня: <b>2:36</b> фокуса · <b>5</b> заданий закрыто · <b>34</b> страниц · <span style="color:var(--green)">все системы в норме</span></div>
+</div>
+<script>
+    let s = 4364; const el = document.getElementById('tm');
+    setInterval(() => { s++; const h=String(Math.floor(s/3600)).padStart(2,'0'), m=String(Math.floor(s%3600/60)).padStart(2,'0'), x=String(s%60).padStart(2,'0'); el.textContent = h+':'+m+':'+x; }, 1000);
+</script>
+</body>
+</html>

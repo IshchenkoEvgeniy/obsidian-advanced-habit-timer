@@ -534,5 +534,17 @@ export const ru = {
     home_summary_prefix: "Итог дня",
     home_summary_timer: "в фокусе",
     home_summary_tasks: "заданий",
-    home_summary_pages: "страниц"
-};
+    home_summary_pages: "страниц",
+    home4_status_ok: "всё синхронизировано",
+    home4_streak: "серия",
+    home4_timer_idle: "таймер не запущен",
+    home4_pause: "пауза",
+    home4_resume: "продолжить",
+    home4_stop: "стоп",
+    home4_queue_tasks: "ОЧЕРЕДЬ ЗАДАНИЙ",
+    home4_done: "выполнено",
+    home4_today: "сегодня",
+    home4_plan: "план",
+    home4_left: "осталось",
+    home4_all_systems: "все системы в норме"
+}

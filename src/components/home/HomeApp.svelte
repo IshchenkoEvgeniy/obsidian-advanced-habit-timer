@@ -10,10 +10,10 @@
     import { greetingKind, nearestTasks, buildDaySummary, buildProjectCards,
         type HomeTaskGrouped, type HomeProjectCard } from '../../home/home-model';
     import { isDone } from '../../utils/status';
-    import type { DailyTask } from '../../tasks/model';
-    import { getHabitValueFromFrontmatter, getHabitWeeklyValue, getHabitDeferredBonus } from '../../services/habit-service';
+    import { getHabitValueFromFrontmatter, getHabitWeeklyValue, getHabitDeferredBonus, calculateHabitStreak } from '../../services/habit-service';
     import { getHabitGoals } from '../../habits/goals';
-    import type { HabitProperty } from '../../types';
+    import type { DailyTask } from '../../tasks/model';
+    import type { HabitProperty, MediaCollectionConfig } from '../../types';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -26,23 +26,23 @@
 
     let lang = plugin.settings.language;
     let today = moment().format('YYYY-MM-DD');
-    const GREETINGS = { morning: 'home_greeting_morning', afternoon: 'home_greeting_afternoon', evening: 'home_greeting_evening', night: 'home_greeting_night' } as const;
-    let greetingKey: keyof typeof GREETINGS = greetingKind(moment().hour());
     let allTasks: DailyTask[] = [];
     let projects: HomeProjectCard[] = [];
-    let activeScopeId = '';
     let timerSecondsToday = 0;
-    let pagesToday = 0;
+    let streak = 0;
     let tick = 0;
+    let timerHandle: ReturnType<typeof setInterval> | null = null;
 
     $: todayStr = moment().format('YYYY-MM-DD');
-    $: dateLabel = moment().format(lang === 'ru' ? 'D MMMM, dddd' : 'dddd, D MMMM');
-    $: nearest = nearestTasks(allTasks, todayStr, 5);
-    $: summary = buildDaySummary({ timerSecondsToday, tasksDoneToday: allTasks.filter(task => task.done).length, pagesReadToday: pagesToday }, seconds => plugin.formatTime(seconds));
+    $: dateLabel = moment().format(lang === 'ru' ? 'YYYY-MM-DD · dddd' : 'YYYY-MM-DD · dddd');
+    $: nearest = nearestTasks(allTasks, todayStr, 4);
+    $: doneCount = allTasks.filter(task => task.done).length;
+    $: summary = buildDaySummary({ timerSecondsToday, tasksDoneToday: doneCount }, seconds => plugin.formatTime(seconds));
     $: activeTimer = tick >= 0 ? plugin.settings.activeTimer : null;
     $: activeTimerSeconds = activeTimer ? (activeTimer.elapsedSeconds || 0) + (activeTimer.timerState === 'running' && activeTimer.lastStartedAt ? Math.max(0, Math.floor((Date.now() - activeTimer.lastStartedAt) / 1000)) : 0) : 0;
+    $: media = tick >= 0 ? mediaInProgress() : [];
+    $: habits = (plugin.settings.properties || []).map(habit => ({ habit, progress: habitProgress(habit) }));
 
-    let timerHandle: ReturnType<typeof setInterval> | null = null;
     onMount(() => {
         timerHandle = setInterval(() => { tick += 1; }, 1000);
         void refresh();
@@ -51,7 +51,6 @@
 
     async function refresh(): Promise<void> {
         try {
-            const date = moment().format('YYYY-MM-DD');
             allTasks = await plugin.tasks.list();
             const cards: HomeProjectCard[] = [];
             for (const scope of plugin.settings.projectScopes || []) {
@@ -63,38 +62,71 @@
                         scopeId: scope.id, name: scope.name, color: scope.color, statuses,
                         isTaskDone: (status: string) => isDone(status) || status === doneStatus,
                         tasks: scopeTasks.map(task => ({ name: task.name, status: task.status, endDate: task.endDate, done: false }))
-                    }], date));
+                    }], todayStr));
                 } catch (error) { console.warn('Home: project load failed', scope.id, error); }
             }
             projects = cards;
-            // Today timer total: from daily note frontmatter habit properties handled in habits card; summary uses tasks + media progress.
-            pagesToday = 0;
+            streak = await loadStreak();
         } catch (error) { console.error('Home refresh failed', error); }
     }
 
-    function habitProgress(habit: { name: string; type?: 'timer' | 'binary' | 'negative' | 'count'; goalMinutes?: number }): { value: number; desired: number; mode: string } {
-        const goal = getHabitGoals(habit as HabitProperty, todayStr, getHabitDeferredBonus(app, plugin.settings.dailyNotesFolder, habit as HabitProperty, todayStr));
+    async function loadStreak(): Promise<number> {
+        try {
+            const habits = plugin.settings.properties || [];
+            if (!habits.length) return 0;
+            const values = await Promise.all(habits.slice(0, 3).map(habit => calculateHabitStreak(app, plugin.settings.dailyNotesFolder, habit)));
+            return Math.max(0, ...values);
+        } catch { return 0; }
+    }
+
+    function habitProgress(habit: HabitProperty): { value: number; desired: number; mode: string } {
+        const goal = getHabitGoals(habit, todayStr, getHabitDeferredBonus(app, plugin.settings.dailyNotesFolder, habit, todayStr));
         const note = plugin.getDailyNote(todayStr);
         const fm = note ? plugin.app.metadataCache.getFileCache(note)?.frontmatter || {} : {};
         const value = goal.mode === 'weekly'
-            ? getHabitWeeklyValue(app, plugin.settings.dailyNotesFolder, habit as never, todayStr)
-            : getHabitValueFromFrontmatter(fm, habit as HabitProperty);
+            ? getHabitWeeklyValue(app, plugin.settings.dailyNotesFolder, habit, todayStr)
+            : getHabitValueFromFrontmatter(fm, habit);
         return { value, desired: goal.desired, mode: goal.mode };
     }
 
-    function habitValueLabel(habit: { type?: 'timer' | 'binary' | 'negative' | 'count' }, progress: { value: number; desired: number }): string {
-        return habit.type === 'timer'
-            ? plugin.formatTime(progress.value) + ' / ' + plugin.formatTime(progress.desired)
-            : `${progress.value} / ${progress.desired}`;
+    $: greetingText = t(lang, GREETINGS[greetingKind(moment().hour())]);
+    function pct(value: number, desired: number): number {
+        return desired > 0 ? Math.min(100, Math.round(value / desired * 100)) : 0;
     }
 
-    async function startHabit(habitName: string): Promise<void> {
-        await plugin.startTimerForHabit(habitName, { openView: false });
-        await refresh();
+    function fmtClock(sec: number): string {
+        const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = sec % 60;
+        return h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`
+            : `${m}:${String(x).padStart(2, '0')}`;
+    }
+
+    function shortHabit(habit: HabitProperty): string {
+        const words = habit.name.split(' ');
+        return words.length > 1 ? words.map(w => w[0]).join('').slice(0, 3).toUpperCase() : habit.name.slice(0, 3).toUpperCase();
     }
 
     function navigate(viewType: string): void {
         void view.leaf.setViewState({ type: viewType, active: true }).catch(error => console.error('Home navigation failed', error));
+    }
+
+    async function toggleTimerPause(): Promise<void> {
+        if (!plugin.settings.activeTimer) return;
+        if (plugin.settings.activeTimer.timerState === 'running') await plugin.pauseTimerSession();
+        else await plugin.resumeTimerSession();
+        tick += 1;
+    }
+
+    async function stopCurrentTimer(): Promise<void> {
+        await plugin.stopTimer();
+        tick += 1;
+        await refresh();
+    }
+
+    async function startHabit(habitName: string): Promise<void> {
+        await plugin.startTimerForHabit(habitName, { openView: false });
+        tick += 1;
+        await refresh();
     }
 
     async function toggleTask(task: HomeTaskGrouped, event: Event): Promise<void> {
@@ -112,12 +144,12 @@
         }
     }
 
-    function mediaInProgress(): { title: string; authors: string[]; cover: string; collectionId: string; file: { path: string } }[] {
+    function mediaInProgress(): { title: string; authors: string[]; cover: string; collectionId: string; progress: number; total: number; unit: string; file: { path: string } }[] {
         try {
-            const items = get(plugin.stateManager.mediaItems) as never as { title: string; authors: string[]; cover: string; collectionId: string; status: string; file: { path: string } }[];
-            return items.filter(item => (plugin.settings.mediaCollections || []).some(collection =>
+            const items = get(plugin.stateManager.mediaItems) as unknown as { title: string; authors: string[]; cover: string; collectionId: string; status: string; progress: number; total: number; unit: string; file: { path: string } }[];
+            return items.filter(item => (plugin.settings.mediaCollections as MediaCollectionConfig[]).some(collection =>
                 collection.id.toLowerCase() === item.collectionId.toLowerCase() && !!collection.readingStatusName &&
-                collection.readingStatusName.trim().toLowerCase() === item.status.trim().toLowerCase())).slice(0, 4);
+                collection.readingStatusName.trim().toLowerCase() === item.status.trim().toLowerCase())).slice(0, 2);
         } catch { return []; }
     }
 
@@ -127,197 +159,184 @@
         });
     }
 
-    function openNote(path: string): void {
-        const file = app.vault.getAbstractFileByPath(path);
-        if (file) void app.workspace.getLeaf(false).openFile(file as never);
-    }
-
-    $: media = tick >= 0 ? mediaInProgress() : [];
-    $: habits = (plugin.settings.properties || []).map(habit => ({ habit, progress: habitProgress(habit) }));
-    $: scopesEmpty = (plugin.settings.projectScopes || []).length === 0;
+    const GREETINGS = { morning: 'home_greeting_morning', afternoon: 'home_greeting_afternoon', evening: 'home_greeting_evening', night: 'home_greeting_night' } as const;
+    const ST = { RUNNING: 'running', PAUSED: 'paused' } as const;
+    $: timerStateLabel = activeTimer?.timerState === ST.RUNNING ? t(lang, 'home_session_running') : t(lang, 'home_session_paused');
 </script>
 
 <div class="home-screen">
-    <header class="home-header">
-        <div>
-            <h1>{t(lang, GREETINGS[greetingKey])}</h1>
-            <span class="home-date">{dateLabel}</span>
-        </div>
-        <div class="home-timer-status" role="status">
-            {#if activeTimer}
-                <span class="home-timer-live"><span class="home-timer-dot" aria-hidden="true"></span>{activeTimer.habitName} · {plugin.formatTime(activeTimerSeconds)}</span>
-            {/if}
-            <button class="home-cta" on:click={() => navigate('habit-timer-view')}>
-                <span use:icon={activeTimer ? 'timer' : 'play'}></span>{t(lang, activeTimer ? 'home_open_timer' : 'home_start_session')}
-            </button>
-        </div>
-    </header>
+    <div class="cbar">
+        <span class="glyph" aria-hidden="true">FL</span>
+        <span class="greet">{greetingText}</span>
+        <span class="date">{dateLabel}</span>
+        <span class="sp"></span>
+        <span class="status-chip" role="status">
+            <span class="dot" class:paused={activeTimer?.timerState !== 'running'} aria-hidden="true"></span>
+            <span class="mono">{activeTimer ? fmtClock(activeTimerSeconds) : '—:—'}</span>
+        </span>
+    </div>
 
-    <section class="home-focus" aria-label={t(lang, 'home_focus_aria')}>
-        <div class="home-focus-mark"><span use:icon={activeTimer ? 'loader' : 'circle-play'}></span></div>
-        <div class="home-focus-body">
-            <span class="home-eyebrow">{t(lang, activeTimer ? 'home_session_active' : 'home_focus')}</span>
-            <h2>{activeTimer ? activeTimer.habitName : t(lang, 'home_focus_empty_title')}</h2>
-            {#if activeTimer}
-                <span class="home-muted">{plugin.formatTime(activeTimerSeconds)} · {t(lang, activeTimer.timerState === 'running' ? 'home_session_running' : 'home_session_paused')}</span>
-            {:else}
-                <span class="home-muted">{t(lang, 'home_focus_empty_hint')}</span>
-            {/if}
-        </div>
-    </section>
+    <div class="statusline" aria-hidden="true">
+        <span class="ok">●</span><span>{t(lang, 'home4_status_ok')}</span>
+        {#if activeTimer}<span>·</span><span class="run">▶ {activeTimer.habitName}</span>{/if}
+        <span>·</span><span>{t(lang, 'home4_streak')}: {streak}d</span>
+    </div>
 
-    <div class="home-grid">
-        <section class="home-card" aria-label={t(lang, 'home_habits_aria')}>
-            <header class="home-card-head">
-                <h3>{t(lang, 'home_habits_title')}</h3>
-                <button class="home-mini" aria-label={t(lang, 'home_open_timer')} on:click={() => navigate('habit-timer-view')}><span use:icon={'arrow-up-right'}></span></button>
-            </header>
-            {#each habits as entry (entry.habit.name)}
-                <div class="home-line">
-                    <div class="home-line-body">
-                        <strong>{entry.habit.name}</strong>
-                        <span class="home-muted">{habitValueLabel(entry.habit, entry.progress)}</span>
-                        <div class="home-progress"><span style={`width:${Math.min(100, entry.progress.desired ? entry.progress.value / entry.progress.desired * 100 : 0)}%`}></span></div>
-                    </div>
-                    {#if entry.habit.type === 'timer'}
-                        <button class="home-mini" aria-label={t(lang, 'home_start_habit') + ': ' + entry.habit.name} on:click={() => void startHabit(entry.habit.name)}><span use:icon={'play'}></span></button>
+    <div class="panes">
+        <div class="pane timer-pane">
+            <div class="timer">
+                <div class="t">{activeTimer ? fmtClock(activeTimerSeconds) : '00:00'}</div>
+                <div class="what">{activeTimer ? `${activeTimer.habitName} · ${timerStateLabel}` : t(lang, 'home4_timer_idle')}</div>
+                <div class="btns">
+                    {#if activeTimer}
+                        <button on:click={() => void toggleTimerPause()}>{activeTimer?.timerState === 'running' ? t(lang, 'home4_pause') : t(lang, 'home4_resume')}</button>
+                        <button on:click={() => void stopCurrentTimer()}>{t(lang, 'home4_stop')}</button>
+                        <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_open_timer')}</button>
+                    {:else}
+                        <button on:click={() => navigate('habit-timer-view')}>{t(lang, 'home_start_session')}</button>
                     {/if}
                 </div>
-            {:else}
-                <p class="home-empty"><span use:icon={'repeat-2'}></span>{t(lang, 'home_habits_empty')}</p>
-            {/each}
-        </section>
-
-        <section class="home-card" aria-label={t(lang, 'home_tasks_aria')}>
-            <header class="home-card-head">
-                <h3>{t(lang, 'home_tasks_title')}</h3>
-                <button class="home-mini" aria-label={t(lang, 'home_open_tasks')} on:click={() => navigate('habit-standalone-tasks')}><span use:icon={'arrow-up-right'}></span></button>
-            </header>
-            {#each nearest as task (task.name + task.sortKey)}
-                <div class="home-line" class:home-overdue={task.overdue}>
-                    <input type="checkbox" checked={task.done} aria-label={t(lang, 'home_task_done') + ': ' + task.name} on:change={(event) => void toggleTask(task, event)} />
-                    <div class="home-line-body">
-                        <strong>{task.name}</strong>
-                        <span class="home-muted">{task.overdue ? t(lang, 'home_overdue') : task.sortKey !== '9999-12-31' ? task.sortKey : t(lang, 'home_no_date')}</span>
+            </div>
+            <div class="rings">
+                {#each habits.slice(0, 3) as entry, i (entry.habit.name)}
+                    {@const p = pct(entry.progress.value, entry.progress.desired)}
+                    <div class="ring">
+                        <div class="c r{i + 1}" style={`background:conic-gradient(${['var(--green)', 'var(--blue)', 'var(--yellow)'][i]} ${p}%, var(--line) 0)`}>
+                            <span class="in">{p}%</span>
+                        </div>
+                        <div class="lbl">{shortHabit(entry.habit)}</div>
+                        <button class="ring-start" aria-label={t(lang, 'home_start_habit') + ': ' + entry.habit.name} on:click={() => void startHabit(entry.habit.name)}>▶</button>
                     </div>
-                </div>
-            {:else}
-                <p class="home-empty"><span use:icon={'list-checks'}></span>{t(lang, 'home_tasks_empty')}</p>
-            {/each}
-        </section>
-
-        <section class="home-card" aria-label={t(lang, 'home_projects_aria')}>
-            <header class="home-card-head">
-                <h3>{t(lang, 'home_projects_title')}</h3>
-                <button class="home-mini" aria-label={t(lang, 'home_open_projects')} on:click={() => navigate('habit-projects-view')}><span use:icon={'arrow-up-right'}></span></button>
-            </header>
-            {#if scopesEmpty}
-                <p class="home-empty"><span use:icon={'columns-3'}></span>{t(lang, 'home_projects_empty')}</p>
-            {:else}
-                {#each projects as project (project.scopeId)}
-                    <button class="home-project" style={`--project-color:${project.color || 'var(--interactive-accent)'}`} on:click={() => navigate('habit-projects-view')}>
-                        <span class="home-project-head"><strong>{project.name}</strong><span class="home-muted">{project.done}/{project.total}</span></span>
-                        <div class="home-progress"><span style={`width:${project.pct}%`}></span></div>
-                        {#if project.nearestDeadline}<span class="home-muted home-deadline"><span use:icon={'calendar-clock'}></span>{t(lang, 'home_next_deadline')}: {project.nearestDeadline}</span>{/if}
-                    </button>
                 {:else}
-                    <p class="home-empty"><span use:icon={'check-circle-2'}></span>{t(lang, 'home_projects_no_active')}</p>
+                    <p class="empty">{t(lang, 'home_habits_empty')}</p>
                 {/each}
-            {/if}
-        </section>
+            </div>
+        </div>
 
-        <section class="home-card" aria-label={t(lang, 'home_library_aria')}>
-            <header class="home-card-head">
-                <h3>{t(lang, 'home_library_title')}</h3>
-                <button class="home-mini" aria-label={t(lang, 'home_open_library')} on:click={() => navigate('habit-library-view')}><span use:icon={'arrow-up-right'}></span></button>
-            </header>
-            {#each media as item (item.file.path)}
-                <div class="home-line">
-                    {#if item.cover}<img class="home-cover" src={item.cover} alt="" loading="lazy" />{:else}<span class="home-cover-fallback" use:icon={'book-open'}></span>{/if}
-                    <div class="home-line-body">
-                        <strong>{item.title}</strong>
-                        <span class="home-muted">{item.authors.join(', ')}</span>
+        <div class="pane">
+            <div class="q">
+                <h3>{t(lang, 'home4_queue_tasks')} <span>{nearest.length} · {doneCount} {t(lang, 'home4_done')}</span></h3>
+                {#each nearest as task (task.name + task.sortKey)}
+                    <div class="row">
+                        <span class="st {task.overdue ? 'over' : task.today ? 'now' : 'plan'}">{task.overdue ? t(lang, 'home_overdue') : task.today ? t(lang, 'home4_today') : t(lang, 'home4_plan')}</span>
+                        <span class="nm">{task.name}</span>
+                        <span class="meta">{task.sortKey === '9999-12-31' ? t(lang, 'home_no_date') : task.sortKey.slice(5)}</span>
+                        <input type="checkbox" checked={task.done} aria-label={t(lang, 'home_task_done') + ': ' + task.name} on:change={(event) => void toggleTask(task, event)} />
                     </div>
-                    <button class="home-mini" aria-label={t(lang, 'home_continue') + ': ' + item.title} on:click={() => startMedia(item)}><span use:icon={'play'}></span></button>
+                {:else}
+                    <div class="row empty-row"><span class="nm">{t(lang, 'home_tasks_empty')}</span></div>
+                {/each}
+            </div>
+
+            <div class="sep"></div>
+
+            <div class="q2">
+                <div class="q">
+                    <h3>{t(lang, 'home_projects_title')} <span>{projects.length}</span></h3>
+                    {#each projects as project (project.scopeId)}
+                        <div class="row" role="button" tabindex="0" on:click={() => navigate('habit-projects-view')} on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate('habit-projects-view')}>
+                            <span class="st {project.pct >= 50 ? 'ok' : 'plan'}">{project.pct}%</span>
+                            <span class="nm">{project.name}</span>
+                            <span class="meta">{project.nearestDeadline ? project.nearestDeadline.slice(5) : '—'}</span>
+                            <span class="prio">{project.total - project.done} {t(lang, 'home4_left')}</span>
+                        </div>
+                    {:else}
+                        <div class="row empty-row"><span class="nm">{t(lang, 'home_projects_empty')}</span></div>
+                    {/each}
                 </div>
-            {:else}
-                <p class="home-empty"><span use:icon={'library'}></span>{t(lang, 'home_library_empty')}</p>
-            {/each}
-        </section>
+                <div class="q">
+                    <h3>{t(lang, 'home_library_title')} <span>{media.length}</span></h3>
+                    {#each media as item (item.file.path)}
+                        <div class="row">
+                            <span class="st ok">{item.total ? Math.round(item.progress / item.total * 100) : 0}%</span>
+                            <span class="nm">{item.title}</span>
+                            <span class="meta">{item.progress}/{item.total} {item.unit}</span>
+                            <button class="go-btn" aria-label={t(lang, 'home_continue') + ': ' + item.title} on:click={() => startMedia(item)}>▶</button>
+                        </div>
+                    {:else}
+                        <div class="row empty-row"><span class="nm">{t(lang, 'home_library_empty')}</span></div>
+                    {/each}
+                </div>
+            </div>
+        </div>
     </div>
 
     {#if summary}
-        <footer class="home-summary">
-            <span use:icon={'flame'}></span>
-            <span>{t(lang, 'home_summary_prefix')}:</span>
-            {#if timerSecondsToday > 0}<strong>{plugin.formatTime(timerSecondsToday)}</strong><span>{t(lang, 'home_summary_timer')}</span>{/if}
-            <strong>{allTasks.filter(task => task.done).length}</strong><span>{t(lang, 'home_summary_tasks')}</span>
-            {#if pagesToday > 0}<strong>{pagesToday}</strong><span>{t(lang, 'home_summary_pages')}</span>{/if}
-        </footer>
+        <div class="hint">
+            {t(lang, 'home_summary_prefix')}: <b>{timerSecondsToday ? plugin.formatTime(timerSecondsToday) : '—'}</b> {t(lang, 'home_summary_timer')} · <b>{doneCount}</b> {t(lang, 'home_summary_tasks')}<span class="dim"> · {t(lang, 'home4_all_systems')}</span>
+        </div>
     {/if}
 </div>
 
 <style>
-    .home-screen { display:flex; flex-direction:column; gap:14px; height:100%; min-height:0; padding:24px 28px; overflow:auto; }
-    .home-header { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-    .home-header h1 { margin:0; font-size:26px; color:var(--text-normal); }
-    .home-date { color:var(--text-muted); font-size:.85rem; }
-    .home-timer-status { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-    .home-timer-live { display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border:1px solid var(--background-modifier-border); border-radius:999px; background:var(--background-secondary); color:var(--text-normal); font-size:.8rem; }
-    .home-timer-dot { width:8px; height:8px; border-radius:50%; background:var(--text-success); animation:home-pulse 1.6s ease-in-out infinite; }
-    @keyframes home-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
-    .home-cta { display:inline-flex; align-items:center; gap:8px; padding:8px 16px; border-radius:var(--radius-m); }
-    .home-cta span { display:block; width:15px; height:15px; }
-    .home-cta span :global(svg) { width:15px; height:15px; }
+    .home-screen { display:flex; flex-direction:column; gap:0; height:100%; min-height:0; padding:20px 24px; overflow:auto; }
+    /* command bar */
+    .cbar { display:flex; align-items:center; gap:12px; background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:10px; padding:11px 14px; }
+    .glyph { width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg, var(--interactive-accent), var(--text-muted)); display:grid; place-items:center; font-weight:700; color:var(--text-on-accent); font-size:12px; flex-shrink:0; }
+    .greet { color:var(--text-normal); font-weight:600; font-size:15px; }
+    .date { color:var(--text-faint); font-size:12px; font-family:var(--font-monospace); }
+    .sp { flex:1; }
+    .status-chip { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--background-modifier-border); border-radius:9999px; padding:5px 13px; }
+    .status-chip .dot { width:8px; height:8px; border-radius:50%; background:var(--text-success); animation:pulse 1.8s infinite; }
+    .status-chip .dot.paused { background:var(--text-warning); animation:none; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+    .mono { font-family:var(--font-monospace); font-size:13px; color:var(--text-normal); font-variant-numeric:tabular-nums; }
 
-    .home-focus { display:flex; align-items:center; gap:18px; padding:20px 22px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:linear-gradient(120deg, color-mix(in srgb, var(--interactive-accent) 9%, var(--background-primary)), var(--background-primary) 55%); box-shadow:var(--shadow-s); }
-    .home-focus-mark { color:var(--interactive-accent); }
-    .home-focus-mark :global(svg) { width:34px; height:34px; }
-    .home-focus-body h2 { margin:2px 0; font-size:19px; color:var(--text-normal); }
-    .home-eyebrow { color:var(--text-muted); font-size:.68rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
-    .home-muted { color:var(--text-muted); font-size:.78rem; }
+    /* status line */
+    .statusline { display:flex; align-items:center; gap:9px; padding:8px 4px 12px; font-family:var(--font-monospace); font-size:11px; color:var(--text-faint); }
+    .statusline .ok { color:var(--text-success); }
+    .statusline .run { color:var(--text-accent); }
 
-    .home-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; }
-    .home-card { display:flex; flex-direction:column; gap:8px; padding:16px 18px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); transition:transform .12s ease, box-shadow .12s ease; }
-    .home-card:hover { box-shadow:var(--shadow-m); }
-    .home-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .home-card-head h3 { margin:0; font-size:1rem; color:var(--text-normal); }
-    .home-mini { display:grid; place-items:center; width:28px; height:28px; min-height:0; padding:6px; box-shadow:none; border-radius:var(--radius-m); }
-    .home-mini span { display:block; width:14px; height:14px; }
-    .home-mini span :global(svg) { width:14px; height:14px; }
+    /* panes */
+    .panes { display:grid; grid-template-columns:300px minmax(0,1fr); gap:14px; }
+    .pane { background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:12px; padding:16px; min-width:0; }
 
-    .home-line { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--background-modifier-border-hover); }
-    .home-line:last-child { border-bottom:0; }
-    .home-line-body { display:flex; flex:1; min-width:0; flex-direction:column; gap:2px; }
-    .home-line-body strong { overflow:hidden; color:var(--text-normal); font-size:.86rem; text-overflow:ellipsis; white-space:nowrap; }
-    .home-line.home-overdue .home-line-body strong { color:var(--text-error); }
-    .home-progress { height:5px; overflow:hidden; border-radius:3px; background:var(--background-modifier-border); }
-    .home-progress span { display:block; height:100%; border-radius:3px; background:var(--interactive-accent); transition:width .25s ease; }
-    :global(.home-overdue .home-progress span) { background:var(--text-error); }
+    /* timer pane */
+    .timer { text-align:center; padding:16px 0 8px; }
+    .timer .t { font-family:var(--font-monospace); font-size:40px; color:var(--text-normal); font-weight:400; font-variant-numeric:tabular-nums; line-height:1.1; }
+    .timer .what { color:var(--text-muted); font-size:12.5px; margin-top:4px; }
+    .btns { display:flex; gap:8px; justify-content:center; margin-top:16px; flex-wrap:wrap; }
+    .btns button { font-family:var(--font-monospace); font-size:12px; background:var(--background-secondary); color:var(--text-normal); border:1px solid var(--background-modifier-border); border-radius:7px; padding:7px 14px; cursor:pointer; transition:border-color .12s, color .12s; }
+    .btns button:hover { border-color:var(--interactive-accent); color:var(--interactive-accent); }
 
-    .home-project { display:flex; flex-direction:column; gap:6px; width:100%; padding:10px 12px; border:1px solid var(--background-modifier-border); border-left:3px solid var(--project-color); border-radius:var(--radius-m); background:var(--background-secondary); text-align:left; transition:transform .12s ease, border-color .12s ease; }
-    .home-project:hover { border-color:var(--background-modifier-border-hover); transform:translateY(-1px); }
-    .home-project-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
-    .home-project-head strong { overflow:hidden; color:var(--text-normal); text-overflow:ellipsis; white-space:nowrap; }
-    .home-deadline { display:inline-flex; align-items:center; gap:5px; }
-    .home-deadline span { width:12px; height:12px; }
-    .home-deadline span :global(svg) { width:12px; height:12px; }
+    /* rings */
+    .rings { display:flex; justify-content:space-around; margin-top:14px; padding-top:14px; border-top:1px solid var(--background-modifier-border); }
+    .ring { text-align:center; position:relative; }
+    .ring .c { width:56px; height:56px; border-radius:50%; display:grid; place-items:center; margin:0 auto 6px; }
+    .ring .c .in { width:44px; height:44px; border-radius:50%; background:var(--background-primary); display:grid; place-items:center; font-family:var(--font-monospace); font-size:11px; color:var(--text-normal); }
+    .ring .lbl { font-size:10px; color:var(--text-faint); font-family:var(--font-monospace); letter-spacing:0.05em; }
+    .ring-start { position:absolute; top:-4px; right:-2px; width:20px; height:20px; min-height:0; padding:0; border-radius:50%; border:1px solid var(--background-modifier-border); background:var(--background-secondary); color:var(--text-muted); font-size:8px; display:grid; place-items:center; cursor:pointer; box-shadow:none; opacity:0; transition:opacity .12s; }
+    .ring:hover .ring-start { opacity:1; }
 
-    .home-cover { flex-shrink:0; width:34px; height:48px; border-radius:4px; object-fit:cover; }
-    .home-cover-fallback { display:grid; place-items:center; flex-shrink:0; width:34px; height:48px; border-radius:4px; background:var(--background-secondary); color:var(--text-faint); }
-    .home-cover-fallback :global(svg) { width:16px; height:16px; }
+    /* queues */
+    .q h3 { font-family:var(--font-monospace); font-size:10.5px; color:var(--text-faint); letter-spacing:0.08em; text-transform:uppercase; margin-bottom:9px; display:flex; justify-content:space-between; align-items:baseline; }
+    .q h3 span { color:var(--text-success); font-weight:400; }
+    .row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; gap:11px; align-items:center; padding:7px 9px; border-radius:7px; font-size:13px; cursor:default; }
+    .row:nth-child(odd) { background:var(--background-secondary); }
+    .row.empty-row { grid-template-columns:1fr; color:var(--text-faint); display:flex; }
+    .row .st { font-family:var(--font-monospace); font-size:9.5px; padding:2px 7px; border-radius:4px; letter-spacing:0.04em; text-transform:uppercase; justify-self:start; }
+    .st.over { background:color-mix(in srgb, var(--text-error) 15%, transparent); color:var(--text-error); }
+    .st.now { background:color-mix(in srgb, var(--interactive-accent) 15%, transparent); color:var(--interactive-accent); }
+    .st.ok { background:color-mix(in srgb, var(--text-success) 15%, transparent); color:var(--text-success); }
+    .st.plan { background:var(--background-modifier-border); color:var(--text-muted); }
+    .row .nm { color:var(--text-normal); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .row .meta { font-family:var(--font-monospace); font-size:10.5px; color:var(--text-faint); }
+    .row input[type='checkbox'] { justify-self:end; }
+    .row[role='button'] { cursor:pointer; }
+    .row[role='button']:hover .nm { color:var(--interactive-accent); }
+    .prio { font-family:var(--font-monospace); font-size:10px; color:var(--text-faint); }
+    .go-btn { width:24px; height:24px; min-height:0; padding:0; border-radius:6px; border:1px solid var(--background-modifier-border); background:var(--background-secondary); color:var(--text-success); font-size:9px; display:grid; place-items:center; cursor:pointer; box-shadow:none; }
+    .sep { height:1px; background:var(--background-modifier-border); margin:12px 0; }
+    .q2 { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
 
-    .home-empty { display:flex; align-items:center; gap:9px; margin:6px 0; color:var(--text-faint); font-size:.8rem; }
-    .home-empty span:first-child { display:block; width:18px; height:18px; flex-shrink:0; }
-    .home-empty span:first-child :global(svg) { width:18px; height:18px; }
+    .hint { margin-top:13px; text-align:center; font-family:var(--font-monospace); font-size:11px; color:var(--text-muted); }
+    .hint b { color:var(--text-normal); font-weight:500; }
+    .hint .dim { color:var(--text-faint); }
+    .empty { color:var(--text-faint); font-size:12.5px; }
 
-    .home-summary { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-secondary); color:var(--text-muted); font-size:.8rem; }
-    .home-summary > span:first-child { display:block; width:15px; height:15px; color:var(--text-warning); }
-    .home-summary > span:first-child :global(svg) { width:15px; height:15px; }
-    .home-summary strong { color:var(--text-normal); }
-
-    @media (max-width: 720px) {
+    @media (max-width: 860px) {
+        .panes { grid-template-columns:1fr; }
+        .q2 { grid-template-columns:1fr; }
         .home-screen { padding:14px 16px; }
-        .home-grid { grid-template-columns:1fr; }
     }
 </style>
