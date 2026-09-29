@@ -3,6 +3,8 @@ import type HabitTimerPlugin from '../main';
 import type { DailyTask } from './model';
 import {taskEditorFields} from './editor-fields';
 import {taskMatches,taskStatuses,occurrenceDates,taskIsMissed,taskCarriesOver} from './planning';
+import {groupJournal,journalGroupOf} from './journal';
+const journalGroupOfSafe=(t:{name:string;date:string;deadline?:string;done:boolean},today:string)=>journalGroupOf(t as Parameters<typeof journalGroupOf>[0],today);
 import { get } from 'svelte/store';
 export const VIEW_TYPE_TASKS = 'habit-standalone-tasks';
 export class TasksView extends ItemView {
@@ -25,9 +27,8 @@ export class TasksView extends ItemView {
         const timer=await this.plugin.tasks.timer();
         if(timer){const active=root.createDiv({cls:'standalone-toolbar'});active.createEl('strong',{text:`${timer.task.name} · ${Math.floor((Date.now()-timer.started)/60000)} мин`});const finish=active.createEl('button',{text:'Завершить сессию'});finish.onclick=()=>{const modal=new Modal(this.app);modal.titleEl.setText('Результат сессии');let note='';new Setting(modal.contentEl).setName('Комментарий').addTextArea(c=>c.onChange(v=>note=v));new Setting(modal.contentEl).addButton(c=>c.setButtonText('Сохранить').onClick(async()=>{await this.run(()=>this.plugin.tasks.finish(note));modal.close();}));modal.open();};}
         const toolbar=root.createDiv({cls:'standalone-toolbar'});
-        const select=toolbar.createEl('select');
-        for(const [value,text] of [['inbox','Входящие'],['today','Сегодня'],['upcoming','Предстоящие'],['overdue','Просроченные'],['missed','Не выполнено'],['undated','Без даты'],['done','Выполненные'],['all','Все']]) select.createEl('option',{value,text});
-        select.value=this.filter; select.onchange=()=>{this.filter=select.value;void this.render();};
+        const chips=[['inbox','Входящие'],['today','Сегодня'],['upcoming','Предстоящие'],['overdue','Просроченные'],['missed','Не выполнено'],['undated','Без даты'],['done','Выполненные'],['all','Все']] as const;
+        for(const [value,text] of chips){const chip=toolbar.createEl('button',{cls:'tj-chip'+(this.filter===value?' on':''),text});chip.onclick=()=>{this.filter=value;void this.render();};}
         const search=toolbar.createEl('input',{type:'search',attr:{placeholder:'Поиск по названию, описанию и тегам','aria-label':'Поиск'}});search.value=this.query;search.onchange=()=>{this.query=search.value;void this.render();};
         const lists=toolbar.createEl('select',{attr:{'aria-label':'Список'}});lists.createEl('option',{value:'',text:'Все списки'});for(const name of new Set(tasks.map(t=>t.list).filter(Boolean)))lists.createEl('option',{value:name!,text:name!});lists.value=this.list;lists.onchange=()=>{this.list=lists.value;void this.render();};
         const layout=toolbar.createEl('select',{attr:{'aria-label':'Представление'}});for(const [value,text] of [['list','Список'],['kanban','Канбан'],['calendar','Календарь']])layout.createEl('option',{value,text});layout.value=this.layout;layout.onchange=()=>{this.layout=layout.value;void this.render();};
@@ -49,8 +50,27 @@ export class TasksView extends ItemView {
             for(const key of keys){const column=grid.createEl('section');column.createEl('h3',{text:this.layout==='kanban'?taskStatuses[key as keyof typeof taskStatuses]:key.slice(8)});groups.set(key,column);}
         }
         if(!visible.length)root.createEl('p',{text:'Нет заданий',cls:'setting-item-description'});
+        const groupTitles: Record<string,string>={overdue:'Просрочено',today:'Сегодня · '+today.slice(8),tomorrow:'Завтра',week:'На этой неделе',later:'Дальше',nodate:'Без даты',done:'Выполненные'};
+        const journalGroups=this.layout==='list'?groupJournal(visible.map(t=>({name:t.name,date:t.date||'',deadline:t.deadline,done:t.done})),today):[];
+        const groupBuckets=new Map<string,HTMLElement>();
+        if(this.layout==='list'){
+            for(const g of journalGroups){
+                const head=root.createDiv({cls:'tj-group-head'});
+                head.createEl('span',{text:groupTitles[g.id]||g.id});
+                head.createEl('span',{text:String(g.tasks.length),cls:'tj-group-count'+(g.id==='overdue'?' bad':'')});
+                groupBuckets.set(g.id,head.parentElement||root);
+            }
+            // re-create section containers after headers: rows must attach into per-group wrappers
+        }
+        const rowTargets=this.layout==='list'
+            ?(()=>{const m=new Map<string,HTMLElement>();let lastHead:HTMLElement|null=null;
+                const children=Array.from(root.children) as HTMLElement[];
+                for(const g of journalGroups){const idx=children.findIndex(el=>el.classList&&el.classList.contains('tj-group-head')&&el.textContent?.startsWith(groupTitles[g.id]??g.id));if(idx>=0){const wrap=root.createDiv({cls:'tj-group-body'});const head=children[idx];if(head)head.after(wrap);m.set(g.id,wrap);}}
+                return m;})()
+            :groups;
         for(const {task,occurrenceDate} of visible.flatMap(task=>(this.layout==='calendar'?occurrenceDates(task,this.month+'-01',monthEnd):[task.date]).map(occurrenceDate=>({task,occurrenceDate})))){
-            const row=(groups.get(this.layout==='kanban'?(task.done?'completed':task.status||'planned'):occurrenceDate)||root).createDiv({cls:'standalone-row'});
+            const groupKey=this.layout==='list'?journalGroupOfSafe(task,today):undefined;
+            const row=(this.layout==='list'?(rowTargets.get(groupKey||'')||root):(groups.get(this.layout==='kanban'?(task.done?'completed':task.status||'planned'):occurrenceDate)||root)).createDiv({cls:'standalone-row'});
             const check=row.createEl('input',{type:'checkbox',attr:{'aria-label':'Выполнено'}});check.checked=task.done;check.disabled=!!task.repeat&&this.layout==='calendar'&&occurrenceDate!==today;check.onchange=()=>void this.run(()=>this.plugin.tasks.save({...task,done:check.checked}));
             const body=row.createDiv();if(taskIsMissed(task,today)||this.layout==='calendar'&&!task.done&&!taskCarriesOver(task)&&occurrenceDate<today)body.createEl('div',{text:'Не выполнено',cls:'setting-item-description'}); const title=body.createEl('button',{text:task.name,cls:'standalone-title'});title.onclick=()=>this.edit(task);
             const status=body.createEl('button',{text:syncState.conflicts[task.id]?'Конфликт':syncState.pending.includes(task.id)?'Ожидает отправки':'Сохранено',cls:'standalone-title'});

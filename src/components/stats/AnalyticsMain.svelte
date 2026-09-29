@@ -7,6 +7,7 @@
     import { moment } from 'obsidian';
     import Heatmap from '../charts/Heatmap.svelte';
     import { DaySummaryModal } from '../../session-modals';
+    import { weekKpis, weekdayRhythm, bestWeekday } from '../../stats/dashboard';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -151,7 +152,23 @@
         }));
     })();
 
-    function showDaySummary(date: string) {
+    // --- Dashboard (concept A): KPI + weekday rhythm ---
+    $: dailyFocus = (() => {
+        const m = new Map<string, number>();
+        $allRecords.forEach(r => {
+            if ((r.type || 'timer') !== 'timer') return;
+            m.set(r.date, (m.get(r.date) || 0) + r.durationSec);
+        });
+        return Array.from(m.entries()).map(([date, focusSec]) => ({ date, focusSec, tasksDone: 0 }));
+    })();
+
+    $: dashKpis = weekKpis(dailyFocus, window.moment().format('YYYY-MM-DD'));
+    $: dashRhythm = weekdayRhythm(dailyFocus, window.moment().format('YYYY-MM-DD'));
+    $: dashBest = bestWeekday(dashRhythm);
+    const dashFmt = (sec: number) => formatDurationShort(sec, lang);
+    const dashDelta = (d: number | null) => d === null ? '' : (d >= 0 ? '▲ +' : '▼ ') + d + '%';
+
+        function showDaySummary(date: string) {
         const recordsForDay = $allRecords.filter(r => r.date === date);
         const sessions: any[] = [];
         recordsForDay.forEach(r => { r.sessions?.forEach(s => { sessions.push({ habit: r.habit, subTask: s.subTask, durationSec: s.durationSec, task: s.task, startHour: s.startHour }); }); });
@@ -259,6 +276,40 @@
             </div>
         </div>
     {/each}
+</div>
+
+<div class="dash-kpis">
+    {#each dashKpis.slice(0, 2) as kpi}
+        <div class="dash-kpi">
+            <div class="dash-kpi-v">{dashFmt(kpi.value)}</div>
+            <div class="dash-kpi-k">{kpi.id === 'focus_week' ? t(lang, 'stats_kpi_focus_week') : t(lang, 'stats_kpi_tasks_week')}</div>
+            {#if kpi.delta !== null && kpi.delta !== undefined}
+                <div class="dash-kpi-d {kpi.delta >= 0 ? 'up' : 'dn'}">{dashDelta(kpi.delta)}</div>
+            {/if}
+        </div>
+    {/each}
+    <div class="dash-kpi">
+        <div class="dash-kpi-v">{dashFmt(dashKpis[2]?.value ?? 0)}</div>
+        <div class="dash-kpi-k">{t(lang, 'stats_kpi_prev_week')}</div>
+    </div>
+    <div class="dash-kpi">
+        <div class="dash-kpi-v">{score}%</div>
+        <div class="dash-kpi-k">{t(lang, 'productivity_score')}</div>
+        <div class="dash-kpi-d {score >= 70 ? 'up' : score >= 40 ? '' : 'dn'}">{score >= 70 ? '▲' : score >= 40 ? '—' : '▼'}</div>
+    </div>
+</div>
+
+<div class="dash-card dash-rhythm">
+    <h3>{t(lang, 'stats_rhythm_title')}</h3>
+    <div class="dash-rhythm-bars">
+        {#each dashRhythm as v, i}
+            <div class="dash-rh-c" class:best={i === dashBest}>
+                <b>{v ? dashFmt(v) : '—'}</b>
+                <i style="height:{Math.max(v ? Math.round(v / Math.max(...dashRhythm, 1) * 100) : 2, 2)}%"></i>
+                <span>{['пн','вт','ср','чт','пт','сб','вс'][i]}</span>
+            </div>
+        {/each}
+    </div>
 </div>
 
 <div class="stats-section-header" style="display:flex; justify-content:space-between; align-items:center; margin-top:30px;">

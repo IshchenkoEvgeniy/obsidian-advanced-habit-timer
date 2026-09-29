@@ -543,5 +543,9 @@ export const en = {
     home4_today: "today",
     home4_plan: "plan",
     home4_left: "left",
-    home4_all_systems: "all systems go"
+    home4_all_systems: "all systems go",
+    stats_kpi_focus_week: "focus this week",
+    stats_kpi_tasks_week: "tasks this week",
+    stats_kpi_prev_week: "previous week",
+    stats_rhythm_title: "Week rhythm · average focus per day",
 }

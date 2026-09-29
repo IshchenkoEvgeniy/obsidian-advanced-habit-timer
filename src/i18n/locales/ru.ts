@@ -546,5 +546,9 @@ export const ru = {
     home4_today: "сегодня",
     home4_plan: "план",
     home4_left: "осталось",
-    home4_all_systems: "все системы в норме"
+    home4_all_systems: "все системы в норме",
+    stats_kpi_focus_week: "фокус за неделю",
+    stats_kpi_tasks_week: "задач за неделю",
+    stats_kpi_prev_week: "прошлая неделя",
+    stats_rhythm_title: "Ритм недели · средний фокус по дням",
 }
