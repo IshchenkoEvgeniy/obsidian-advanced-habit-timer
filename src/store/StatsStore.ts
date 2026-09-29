@@ -28,7 +28,7 @@ export const allRecords = writable<DailyRecord[]>([]);
 export const recordsIndex = writable<Map<string, Map<string, DailyRecord>>>(new Map());
 
 export const currentStatsTab = writable<'analytics' | 'gamification'>('analytics');
-export const currentPeriod = writable<'day' | 'week' | 'month' | 'all'>('month');
+export const currentPeriod = writable<'day' | 'week' | 'month' | 'd90' | 'half' | 'year' | 'all'>('month');
 export const selectedStatsHabit = writable<string | null>(null);
 export const viewMode = writable<'main' | 'detail'>('main');
 

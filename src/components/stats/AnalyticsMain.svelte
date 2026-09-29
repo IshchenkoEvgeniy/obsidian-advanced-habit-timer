@@ -8,6 +8,7 @@
     import Heatmap from '../charts/Heatmap.svelte';
     import { DaySummaryModal } from '../../session-modals';
     import { weekKpis, weekdayRhythm, bestWeekday } from '../../stats/dashboard';
+    import { inPeriod, trendComparison, PERIODS } from '../../stats/periods';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -23,24 +24,31 @@
     ];
 
     const periods = [
-        { id: 'day', label: 'day' },
-        { id: 'week', label: 'week' },
-        { id: 'month', label: 'month' },
+        { id: 'day', label: 'period_1d' },
+        { id: 'week', label: 'period_7d' },
+        { id: 'month', label: 'period_30d' },
+        { id: 'd90', label: 'period_90d' },
+        { id: 'half', label: 'period_half' },
+        { id: 'year', label: 'period_year' },
         { id: 'all', label: 'all_time' }
     ];
 
     $: filteredRecords = (() => {
-        const now = window.moment();
-        const p = $currentPeriod;
-        return $allRecords.filter(rec => {
-            if (p === 'all') return true;
-            const recDate = window.moment(rec.date);
-            if (p === 'day') return recDate.isSame(now, 'day');
-            if (p === 'week') return recDate.isSame(now, 'week');
-            if (p === 'month') return recDate.isSame(now, 'month');
-            return true;
-        });
+        const today = window.moment().format('YYYY-MM-DD');
+        return $allRecords.filter(rec => inPeriod(rec.date, $currentPeriod, today));
     })();
+
+    // Daily focus buckets for trend comparison over the selected period
+    $: dailyFocusBuckets = (() => {
+        const m = new Map<string, number>();
+        $allRecords.forEach(r => {
+            if ((r.type || 'timer') !== 'timer') return;
+            m.set(r.date, (m.get(r.date) || 0) + r.durationSec);
+        });
+        return Array.from(m.entries()).map(([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
+    })();
+
+    $: focusTrend = trendComparison(dailyFocusBuckets, $currentPeriod);
 
     // Calculate score
     $: score = (() => {
@@ -168,6 +176,25 @@
     const dashFmt = (sec: number) => formatDurationShort(sec, lang);
     const dashDelta = (d: number | null) => d === null ? '' : (d >= 0 ? '▲ +' : '▼ ') + d + '%';
 
+        // --- Leaders table (concept E) ---
+    $: leadersData = (() => {
+        const rows = plugin.settings.properties.map(prop => {
+            const recs = filteredRecords.filter(r => r.habit === prop.name);
+            const sec = recs.reduce((sum, r) => sum + (r.type === 'timer' ? r.durationSec : 0), 0);
+            const sessions = recs.reduce((sum, r) => sum + (r.sessions?.length || 0), 0);
+            const avg = sessions > 0 ? Math.round(sec / sessions) : 0;
+            const goalPct = (() => {
+                // mean % of desired goal over days when the habit was tracked in period
+                const met = recs.filter(r => ['completed', 'partial', 'excused', 'deferred'].includes(r.state || ''));
+                if (!recs.length) return 0;
+                return Math.round(met.length / recs.length * 100);
+            })();
+            return { name: prop.name, sec, sessions, avg, goalPct };
+        }).filter(r => r.sec > 0 || r.sessions > 0);
+        return rows.sort((a, b) => b.sec - a.sec);
+    })();
+
+
         function showDaySummary(date: string) {
         const recordsForDay = $allRecords.filter(r => r.date === date);
         const sessions: any[] = [];
@@ -226,6 +253,7 @@
         </svg>
         <div class="donut-hole">
             <div class="donut-total-val">{donutTotalFormatted}</div>
+            {#if focusTrend.deltaPct !== null}<div class="trend-badge {focusTrend.deltaPct >= 0 ? 'up' : 'dn'}">{focusTrend.deltaPct >= 0 ? '▲ +' : '▼ '}{focusTrend.deltaPct}%</div>{/if}
             <div class="donut-total-lbl">{t(lang, 'total')}</div>
         </div>
     </div>
@@ -310,6 +338,34 @@
             </div>
         {/each}
     </div>
+</div>
+
+<div class="leaders-card">
+    <h3 class="leaders-title">{t(lang, 'stats_leaders_title')} <b>{t(lang, 'stats_leaders_hint')}</b></h3>
+    <table class="leaders-table">
+        <thead>
+            <tr>
+                <th>{t(lang, 'stats_col_habit')}</th>
+                <th class="r">{t(lang, 'stats_col_hours')}</th>
+                <th class="r">{t(lang, 'stats_col_sessions')}</th>
+                <th class="r">{t(lang, 'stats_col_avg')}</th>
+                <th class="r">{t(lang, 'stats_col_goal')}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {#each leadersData as row (row.name)}
+                <tr role="button" tabindex="0" on:click={() => openHabit(row.name)} on:keydown={(e) => e.key === 'Enter' && openHabit(row.name)}>
+                    <td><span class="nm">{row.name}</span></td>
+                    <td class="r mono">{dashFmt(row.sec)}</td>
+                    <td class="r mono">{row.sessions}</td>
+                    <td class="r mono">{dashFmt(row.avg)}</td>
+                    <td class="r mono">{row.goalPct}%</td>
+                </tr>
+            {:else}
+                <tr><td colspan="5" style="color:var(--text-faint)">{t(lang, 'no_data')}</td></tr>
+            {/each}
+        </tbody>
+    </table>
 </div>
 
 <div class="stats-section-header" style="display:flex; justify-content:space-between; align-items:center; margin-top:30px;">

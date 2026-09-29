@@ -3,6 +3,7 @@
     import type HabitTimerPlugin from '../../main';
     import { t } from '../../i18n';
     import { allRecords, currentPeriod, selectedStatsHabit, viewMode } from '../../store/StatsStore';
+    import { inPeriod } from '../../stats/periods';
     import { formatDurationShort } from '../../utils';
     import { moment } from 'obsidian';
     import BarChart from '../charts/BarChart.svelte';
@@ -25,16 +26,8 @@
     
     // Filtered by currentPeriod
     $: records = (() => {
-        const now = window.moment();
-        const p = $currentPeriod;
-        return habitAllRecords.filter(rec => {
-            if (p === 'all') return true;
-            const recDate = window.moment(rec.date);
-            if (p === 'day') return recDate.isSame(now, 'day');
-            if (p === 'week') return recDate.isSame(now, 'week');
-            if (p === 'month') return recDate.isSame(now, 'month');
-            return true;
-        });
+        const today = window.moment().format('YYYY-MM-DD');
+        return habitAllRecords.filter(rec => inPeriod(rec.date, $currentPeriod, today));
     })();
 
     $: maxDaily = Math.max(...habitAllRecords.map(r => r.durationSec), 0);

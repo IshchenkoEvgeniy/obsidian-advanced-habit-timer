@@ -4270,3 +4270,22 @@
 .dash-rh-c.best i { background:var(--text-success); }
 .dash-rh-c span { font-family:var(--font-monospace); font-size:10px; color:var(--text-faint); }
 @media (max-width:860px) { .dash-kpis { grid-template-columns:1fr 1fr; } }
+
+
+/* ===== Stats analytics (concept E "Аналитик") ===== */
+.leaders-card { background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:12px; padding:15px 17px; margin-bottom:16px; }
+.leaders-title { font-family:var(--font-monospace); font-size:10.5px; color:var(--text-faint); letter-spacing:.08em; text-transform:uppercase; margin:0 0 10px; display:flex; justify-content:space-between; align-items:baseline; }
+.leaders-title b { color:var(--text-muted); font-weight:400; text-transform:none; letter-spacing:0; }
+.leaders-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.leaders-table th { font-family:var(--font-monospace); font-size:9.5px; color:var(--text-faint); letter-spacing:.06em; text-transform:uppercase; text-align:left; padding:0 8px 8px; border-bottom:1px solid var(--background-modifier-border); }
+.leaders-table th.r, .leaders-table td.r { text-align:right; }
+.leaders-table td { padding:8px; border-bottom:1px solid rgba(255,255,255,.035); color:var(--text-muted); }
+.leaders-table tr:last-child td { border-bottom:0; }
+.leaders-table tbody tr { cursor:pointer; }
+.leaders-table tbody tr:hover td { background:rgba(255,255,255,.02); }
+.leaders-table tbody tr:hover .nm { color:var(--text-accent); }
+.leaders-table .nm { color:var(--text-normal); font-weight:500; }
+.leaders-table .mono { font-family:var(--font-monospace); font-size:11.5px; font-variant-numeric:tabular-nums; }
+.trend-badge { display:inline-block; font-family:var(--font-monospace); font-size:11px; margin-top:5px; padding:2px 8px; border-radius:5px; }
+.trend-badge.up { background:rgba(95,201,146,.15); color:var(--text-success); }
+.trend-badge.dn { background:rgba(255,99,99,.15); color:var(--text-error); }
