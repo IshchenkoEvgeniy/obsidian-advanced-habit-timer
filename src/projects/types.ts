@@ -18,6 +18,36 @@ export interface ProjectScopeDefinition {
      * Prefix with '!' to negate (re-include).
      */
     excludePatterns?: string;
+    githubProjectUrl?: string;
+    /** Optional repository used for native GitHub Issues and sub-issues. */
+    githubIssuesRepositoryUrl?: string;
+    githubNativeItems?: Record<string, {
+        itemId: string;
+        issueId: string;
+        url?: string;
+        baseTitle: string;
+        baseClosed?: boolean;
+    }>;
+    githubChecklistGroups?: Record<string, {
+        itemId: string;
+        contentId: string;
+        baseTitle: string;
+        baseChecks: Record<string, boolean>;
+    }>;
+    githubFields?: { id: string; name: string; type: string; options?: { id: string; name: string; color?: string }[] }[];
+    githubBindings?: Record<string, {
+        itemId: string;
+        base: { name: string; status: string; archived: boolean };
+        localFields?: Record<string, string | number>;
+        baseFields?: Record<string, string | number>;
+        meta?: {
+            url?: string;
+            contentType: 'DraftIssue' | 'Issue' | 'PullRequest';
+            fields: Record<string, string | number>;
+            assignees?: string[];
+            subIssues?: { completed: number; total: number };
+        };
+    }>;
 }
 
 export interface ProjectScopeStats {
@@ -50,11 +80,18 @@ export interface ProjectTask {
     color?: string;
     tags?: string;
     priority?: string;
+    /** Nearest level-two heading in a checklist file, or child folder in a folder scope. */
+    section?: string;
     images?: string[];
     subtasks?: ProjectSubtask[];
     order?: number;
     sourceLine?: number;
     blockId?: string;
+    parentId?: string;
+    indent?: number;
+    archived?: boolean;
+    /** Numbered headings above a checkbox in a structured Markdown checklist. */
+    checklistAncestors?: { id: string; title: string; sourceLine: number }[];
 }
 
 export function projectTaskId(filePath: string, sourceLine?: number, blockId?: string): string {
@@ -62,7 +99,7 @@ export function projectTaskId(filePath: string, sourceLine?: number, blockId?: s
     return sourceLine === undefined ? `file:${filePath}` : `line:${filePath}:${sourceLine}`;
 }
 
-export type ProjectTab = 'board' | 'table' | 'calendar' | 'dashboard' | 'gallery' | 'timeline';
+export type ProjectTab = 'board' | 'table' | 'calendar' | 'dashboard' | 'timeline';
 
 export interface TaskData {
     name: string;
@@ -75,5 +112,6 @@ export interface TaskData {
     color: string;
     tags?: string;
     priority?: string;
+    section?: string;
     order?: number;
 }

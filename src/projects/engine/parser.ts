@@ -2,7 +2,7 @@ import { App, TFile, Notice } from 'obsidian';
 import { projectTaskId, type ProjectScopeDefinition, type ProjectTask, type ProjectSubtask } from '../types';
 import { parseDuration, getObject, getString, getStringOpt, getNumber } from '../../utils';
 import type { ProjectCache } from './cache';
-import { blockIdFromTaskLine, ensureTaskBlockIds, stripTaskBlockId } from './task-identity';
+import { blockIdFromTaskLine, taskDisplayTitle, virtualTaskId } from './task-identity';
 import { getCommunityPlugin, getDataviewApi } from '../community-plugins';
 
 export class ProjectParser {
@@ -51,15 +51,7 @@ export class ProjectParser {
             if (!m) continue;
             if (blockId && blockIdFromTaskLine(line) !== blockId) continue;
             const rawText = m[3] || '';
-            const cleanName = stripTaskBlockId(rawText)
-                .replace(/⏱️[ \t]*[\d:]+/g, '')
-                .replace(/⏳[ \t]*[\d:]+/g, '')
-                .replace(/🏷️[ \t]*(?:(?!\s|,|⏱️|⏳|📅|🏁).)+/g, '')
-                .replace(/\[\[Habits\/[^\]]+\]\]/g, '')
-                .replace(/(?:⏫|🔼|🔽)/g, '')
-                .replace(/(?:📅|🏁)[ \t]*[\d-]{10}/g, '')
-                .replace(/#[a-zA-Z0-9_-]+/g, '')
-                .trim();
+            const cleanName = taskDisplayTitle(rawText);
             if (blockId || cleanName === taskName) {
                 return {
                     lineIdx: i,
@@ -204,6 +196,10 @@ export class ProjectParser {
                 color: getString(fm['color']) || scope.color,
                 tags: tagsStr,
                 priority: getStringOpt(fm['priority'])?.toLowerCase(),
+                archived: fm['project_archived'] === true,
+                section: scope.sourceType === 'folder'
+                    ? file.path.slice(scope.sourceValue.trim().replace(/\/$/, '').length + 1).split('/').slice(0, -1).join('/') || undefined
+                    : undefined,
                 order: getNumber(fm['order'], 0),
                 images,
                 subtasks
@@ -222,18 +218,17 @@ export class ProjectParser {
             return cached.tasks;
         }
 
-        let content = await this.app.vault.read(file);
-        const identified = ensureTaskBlockIds(content, file.path);
-        if (identified.changed) {
-            content = identified.content;
-            await this.app.vault.modify(file, content);
-        }
+        const content = await this.app.vault.read(file);
         const lines = content.split('\n');
         const tasks: ProjectTask[] = [];
+        const virtualOccurrences = new Map<string, number>();
         
         let currentStatus = columns[0] || 'Backlog';
+        let currentSection: string | undefined;
         let currentTask: ProjectTask | null = null;
-        let lastParentIndent = 0;
+        let activeGroup: { id: string; title: string; sourceLine: number; number: string } | undefined;
+        let activeNestedGroup: { id: string; title: string; sourceLine: number; number: string } | undefined;
+        const checkboxParents: { task: ProjectTask; indent: number }[] = [];
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -246,7 +241,30 @@ export class ProjectParser {
                 if (matchedCol) {
                     currentStatus = matchedCol;
                 }
+                if (headMatch[1]?.length === 1) currentSection = undefined;
+                if (headMatch[1]?.length === 2) currentSection = matchedCol ? undefined : headerText;
+                activeGroup = undefined;
+                activeNestedGroup = undefined;
                 currentTask = null;
+                checkboxParents.length = 0;
+                continue;
+            }
+
+            const groupMatch = currentSection?.startsWith('Этап ') && line.match(/^(\d+)\.[ \t]+\*\*(.+?)\*\*[ \t]*$/);
+            if (groupMatch) {
+                activeGroup = { id: `${currentSection}/${groupMatch[1]}`, number: groupMatch[1]!,
+                    title: `${groupMatch[1]}. ${taskDisplayTitle(groupMatch[2] || '')}`, sourceLine: i };
+                activeNestedGroup = undefined;
+                currentTask = null;
+                checkboxParents.length = 0;
+                continue;
+            }
+            const nestedGroupMatch = currentSection?.startsWith('Этап ') && line.match(/^[ \t]+-[ \t]+\*\*((?:\d+\.)+\d+)[ \t]+(.+?)\*\*[ \t]*$/);
+            if (nestedGroupMatch && activeGroup && nestedGroupMatch[1]?.startsWith(`${activeGroup.number}.`)) {
+                activeNestedGroup = { id: `${currentSection}/${nestedGroupMatch[1]}`, number: nestedGroupMatch[1]!,
+                    title: `${nestedGroupMatch[1]} ${taskDisplayTitle(nestedGroupMatch[2] || '')}`, sourceLine: i };
+                currentTask = null;
+                checkboxParents.length = 0;
                 continue;
             }
 
@@ -257,8 +275,9 @@ export class ProjectParser {
                 const checked = listMatch[2] !== ' ';
                 const rawText = listMatch[3] ? listMatch[3].trim() : "";
 
-                if (indent === 0 || !currentTask || indent <= lastParentIndent) {
-                    lastParentIndent = indent;
+                {
+                    while (checkboxParents.length && checkboxParents[checkboxParents.length - 1]!.indent >= indent) checkboxParents.pop();
+                    const parentTask = checkboxParents[checkboxParents.length - 1]?.task || null;
                     
                     let spent = 0;
                     const spentMatch = rawText.match(/⏱️[ \t]*([\d:]+)/);
@@ -286,15 +305,14 @@ export class ProjectParser {
                     if (endMatch && endMatch[1]) endDate = endMatch[1];
 
                     const blockId = blockIdFromTaskLine(line);
-                    let name = stripTaskBlockId(rawText)
-                        .replace(/⏱️[ \t]*[\d:]+/g, '')
-                        .replace(/⏳[ \t]*[\d:]+/g, '')
-                        .replace(/🏷️[ \t]*(?:(?!\s|,|⏱️|⏳|📅|🏁).)+/g, '')
-                        .replace(/\[\[Habits\/[^\]]+\]\]/g, '')
-                        .replace(/(?:⏫|🔼|🔽)/g, '')
-                        .replace(/(?:📅|🏁)[ \t]*[\d-]{10}/g, '')
-                        .replace(/#[a-zA-Z0-9_-]+/g, '')
-                        .trim();
+                    const inlineStatus = rawText.match(/<!-- project-status: ([^>]+) -->/)?.[1]?.trim();
+                    const name = taskDisplayTitle(rawText);
+                    const numbered = rawText.match(/^\*{0,2}(\d+(?:\.\d+)+)\*{0,2}(?:\s|$)/)?.[1];
+                    const checklistAncestors = activeGroup && (!numbered || numbered.startsWith(`${activeGroup.number}.`))
+                        ? [activeGroup, ...(activeNestedGroup &&
+                            (!numbered || numbered.startsWith(`${activeNestedGroup.number}.`)) ? [activeNestedGroup] : [])]
+                            .map(({ id, title, sourceLine }) => ({ id, title, sourceLine }))
+                        : undefined;
 
                     const images: string[] = [];
                     const imgMatch = rawText.match(/!\[.*?\]\((.*?)\)/);
@@ -307,16 +325,22 @@ export class ProjectParser {
                     }
 
                     const tagsList: string[] = [];
-                    const tagsMatches = rawText.matchAll(/#([a-zA-Z0-9_-]+)/g);
+                    const tagsMatches = rawText.matchAll(/(?:^|\s)#([a-zA-Z0-9_-]+)/g);
                     for (const tm of tagsMatches) {
                         if (tm[1]) tagsList.push(tm[1]);
                     }
 
+                    const virtualBase = virtualTaskId(file.path, currentSection, rawText, 0);
+                    const occurrence = (virtualOccurrences.get(virtualBase) || 0) + 1;
+                    virtualOccurrences.set(virtualBase, occurrence);
+                    const hasNumber = /^\*{0,2}\d+(?:\.\d+)+\*{0,2}(?:\s|$)/.test(rawText);
+                    const taskId = blockId && !hasNumber ? projectTaskId(file.path, i, blockId)
+                        : virtualTaskId(file.path, currentSection, rawText, occurrence);
                     currentTask = {
-                        id: projectTaskId(file.path, i, blockId),
+                        id: taskId,
                         file,
                         name,
-                        status: checked ? (columns[columns.length - 1] || 'Done') : currentStatus,
+                        status: checked ? (columns[columns.length - 1] || 'Done') : inlineStatus || currentStatus,
                         timeSpentSec: spent,
                         timeEstimatedSec: estimated,
                         habitName: habit,
@@ -326,9 +350,14 @@ export class ProjectParser {
                         color: scope.color,
                         tags: tagsList.join(', '),
                         priority,
+                        section: currentSection,
                         order: i,
                         sourceLine: i,
                         blockId,
+                        parentId: parentTask?.id,
+                        checklistAncestors,
+                        indent,
+                        archived: rawText.includes('<!-- project-archived -->'),
                         images,
                         subtasks: []
                     };
@@ -339,13 +368,18 @@ export class ProjectParser {
                     }
 
                     tasks.push(currentTask);
-                } else {
-                    currentTask.subtasks!.push({
+                    checkboxParents.push({ task: currentTask, indent });
+                    if (parentTask) parentTask.subtasks!.push({
                         line: i,
                         checked,
                         text: rawText
                     });
                 }
+            } else if (/^[ \t]*-[ \t]+/.test(line)) {
+                // An unchecked list heading can own nested checkboxes. Do not attach them
+                // to the previous checkbox merely because they are indented further.
+                currentTask = null;
+                checkboxParents.length = 0;
             }
         }
 

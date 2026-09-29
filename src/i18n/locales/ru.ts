@@ -250,7 +250,6 @@ export const ru = {
     table_view: "Таблица",
     calendar_view: "Календарь",
     dashboard_view: "Дашборд",
-    gallery_view: "Галерея",
     add_new_task: "Добавить задачу",
     task_name_label: "Название задачи",
     task_exists: "Задача с таким именем уже существует.",

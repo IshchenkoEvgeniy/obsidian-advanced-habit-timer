@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import type { ProjectScopeStats, ProjectTask, ProjectTab } from '../projects/types';
 
-export const currentTab = writable<ProjectTab>('board');
+export const currentTab = writable<ProjectTab>('table');
 export const tasks = writable<ProjectTask[]>([]);
 export const columns = writable<string[]>(['Backlog', 'To Do', 'In Progress', 'Done']);
 export const searchQuery = writable<string>('');

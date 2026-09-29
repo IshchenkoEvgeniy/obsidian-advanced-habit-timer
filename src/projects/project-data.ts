@@ -46,8 +46,16 @@ export class ProjectDataEngine {
         return this.mutator.createTask(scope, data);
     }
 
+    async moveTaskBefore(scope: ProjectScopeDefinition, source: ProjectTask, target: ProjectTask): Promise<void> {
+        return this.mutator.moveTaskBefore(scope, source, target);
+    }
+
     async deleteTask(task: ProjectTask, isSingleFileTask?: boolean): Promise<void> {
         return this.mutator.deleteTask(task, isSingleFileTask);
+    }
+
+    async setArchived(task: ProjectTask, archived: boolean, isSingleFileTask?: boolean): Promise<void> {
+        return this.mutator.setArchived(task, archived, isSingleFileTask);
     }
 
     async startTimerForTask(task: ProjectTask, isSingleFileTask?: boolean) {

@@ -16,6 +16,7 @@ export function projectTaskToData(
         color: task.color || '',
         tags: task.tags || '',
         priority: task.priority,
+        section: task.section,
         order: task.order || 0,
         ...changes
     };

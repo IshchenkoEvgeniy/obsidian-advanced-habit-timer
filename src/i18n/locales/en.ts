@@ -248,7 +248,6 @@ export const en = {
     table_view: "Table View",
     calendar_view: "Calendar",
     dashboard_view: "Dashboard",
-    gallery_view: "Gallery",
     add_new_task: "Add New Task",
     task_name_label: "Task Name",
     task_exists: "A task with this name already exists.",

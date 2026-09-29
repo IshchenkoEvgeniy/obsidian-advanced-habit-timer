@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, moment, requestUrl } from 'obsidian';
+import { App, Modal, Platform, PluginSettingTab, Setting, Notice, moment, requestUrl } from 'obsidian';
 import { t } from '../i18n';
 import type HabitTimerPlugin from '../main';
 import SettingsSvelte from '../components/Settings.svelte';
@@ -6,6 +6,7 @@ import { mount } from 'svelte';
 import { DEFAULT_LIBRARY_PROPERTY_ALIASES } from '../types';
 import type { HabitProperty, LibraryPropertyField, WeekdayKey } from '../types';
 import type { Language } from '../i18n';
+import type { ProjectScopeDefinition } from '../projects/types';
 
 interface TelegramChatInfo { id?: string | number; }
 interface TelegramMessageInfo { chat?: TelegramChatInfo; }
@@ -117,6 +118,29 @@ export class HabitTimerSettingTab extends PluginSettingTab {
             else if (scope.sourceType === 'file') placeholderText = t(lang, 'scope_source_placeholder_file');
 
             const valInput = srcRow.createEl('input', { type: 'text', value: scope.sourceValue, placeholder: placeholderText, attr: { style: 'flex-grow: 1;' } });
+
+            const githubRow = scopeCard.createDiv({ attr: { style: 'display: flex; gap: 10px; align-items: center;' } });
+            githubRow.createSpan({ text: 'GitHub Project', attr: { style: 'font-size: 0.9em; color: var(--text-muted); min-width: 80px;' } });
+            const githubInput = githubRow.createEl('input', {
+                type: 'url', value: scope.githubProjectUrl || '',
+                placeholder: 'https://github.com/users/IshchenkoEvgeniy/projects/2',
+                attr: { style: 'flex-grow: 1;' }
+            });
+            githubInput.onchange = async () => {
+                scope.githubProjectUrl = githubInput.value.trim();
+                await this.plugin.saveSettings();
+            };
+            scopeCard.createEl('small', { text: lang === 'ru'
+                ? 'Токен вводится при синхронизации и хранится только до закрытия окна Projects.'
+                : 'The token is entered when syncing and kept only until the Projects view closes.' });
+            {
+                const importRow = scopeCard.createDiv({ attr: { style: 'display: flex; align-items: center; gap: 10px;' } });
+                const importButton = importRow.createEl('button', { text: lang === 'ru' ? 'Импортировать чеклист как проект' : 'Import checklist as project' });
+                importRow.createEl('small', { text: lang === 'ru'
+                    ? 'Создаст копию в Obsidian и отдельный проект; текущий проект сохранится.'
+                    : 'Copies a file into Obsidian and creates a separate project.' });
+                importButton.onclick = () => this.openChecklistImportModal(scope, lang);
+            }
 
             typeSel.onchange = async () => {
                 scope.sourceType = typeSel.value as 'folder' | 'tag' | 'dataview' | 'file';
@@ -709,5 +733,98 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                 });
             }
         });
+    }
+
+    private openChecklistImportModal(scope: ProjectScopeDefinition, lang: Language): void {
+        const modal = new Modal(this.app);
+        modal.setTitle(lang === 'ru' ? 'Импортировать чеклист как проект' : 'Import checklist as project');
+        modal.contentEl.createEl('p', { text: lang === 'ru'
+            ? 'Укажите полный путь к Markdown-файлу. Плагин скопирует его в хранилище Obsidian и создаст отдельный проект.'
+            : 'Enter the full path to a Markdown file. The plugin will copy it into your Obsidian vault and create a separate project.' });
+        const defaultPath = scope.sourceValue.replace(/\\/g, '/').endsWith('Factory Farm Dungeon Mining')
+            ? 'L:\\Games\\factory-farm-dungeon-mining\\docs\\DEVELOPMENT_CHECKLIST.md'
+            : '';
+        const pathInput = modal.contentEl.createEl('input', {
+            type: 'text', value: defaultPath,
+            placeholder: lang === 'ru' ? 'Полный путь к файлу .md' : 'Full path to a .md file',
+            attr: { style: 'width: 100%; margin-bottom: 12px;' }
+        });
+        const errorEl = modal.contentEl.createEl('div', {
+            attr: { style: 'color: var(--text-error); min-height: 1.5em; margin-bottom: 8px;' }
+        });
+        const actions = modal.contentEl.createDiv({ attr: { style: 'display: flex; gap: 8px; justify-content: flex-end;' } });
+        const cancelButton = actions.createEl('button', { text: lang === 'ru' ? 'Отмена' : 'Cancel' });
+        cancelButton.onclick = () => modal.close();
+        const submitButton = actions.createEl('button', { text: lang === 'ru' ? 'Импортировать' : 'Import', cls: 'mod-cta' });
+        const submit = async () => {
+            if (submitButton.disabled) return;
+            if (!Platform.isDesktopApp) {
+                errorEl.setText(lang === 'ru' ? 'Импорт по пути доступен в настольном Obsidian.' : 'Path import is available in Obsidian desktop.');
+                return;
+            }
+            const sourcePath = pathInput.value.trim().replace(/^(["'])(.*)\1$/, '$2');
+            if (!/\.md$/i.test(sourcePath) || !/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(sourcePath)) {
+                errorEl.setText(lang === 'ru' ? 'Укажите полный путь к файлу .md.' : 'Enter an absolute path to a .md file.');
+                return;
+            }
+            submitButton.disabled = true;
+            submitButton.setText(lang === 'ru' ? 'Импорт…' : 'Importing…');
+            errorEl.setText('');
+            try {
+                const fileSystem = require('fs') as typeof import('node:fs');
+                const content = await fileSystem.promises.readFile(sourcePath, 'utf8');
+                if (!content.trim()) throw new Error(lang === 'ru' ? 'Файл пуст.' : 'The file is empty.');
+                const fileName = sourcePath.split(/[\\/]/).pop() || 'Checklist.md';
+                const target = await this.importChecklistContent(scope, fileName, content);
+                modal.close();
+                new Notice(lang === 'ru' ? `Импортировано: ${target}` : `Imported: ${target}`);
+                this.display();
+            } catch (error) {
+                errorEl.setText(error instanceof Error ? error.message : String(error));
+            } finally {
+                submitButton.disabled = false;
+                submitButton.setText(lang === 'ru' ? 'Импортировать' : 'Import');
+            }
+        };
+        submitButton.onclick = () => { void submit(); };
+        pathInput.onkeydown = event => {
+            if (event.key === 'Enter') { event.preventDefault(); void submit(); }
+        };
+        modal.open();
+        pathInput.focus();
+        pathInput.select();
+    }
+
+    private async importChecklistContent(scope: ProjectScopeDefinition, fileName: string, content: string): Promise<string> {
+        const folderName = scope.sourceType === 'folder'
+            ? (scope.sourceValue.split('/').filter(Boolean).pop() || scope.name)
+            : scope.name;
+        const folder = `Projects/${folderName.replace(/[\\/:*?"<>|]/g, '-').trim() || 'Imported'}`;
+        let parent = '';
+        for (const part of folder.split('/')) {
+            parent = parent ? `${parent}/${part}` : part;
+            if (!this.app.vault.getAbstractFileByPath(parent)) await this.app.vault.createFolder(parent);
+        }
+        const stem = fileName.replace(/\.md$/i, '').replace(/[\\/:*?"<>|]/g, '-').trim() || 'Checklist';
+        let target = `${folder}/${stem}.md`;
+        let suffix = 2;
+        while (this.app.vault.getAbstractFileByPath(target)) target = `${folder}/${stem} (${suffix++}).md`;
+        await this.app.vault.create(target, content);
+        const newScope: ProjectScopeDefinition = {
+            id: String(Date.now()),
+            name: `${folderName} — Checklist`,
+            sourceType: 'file',
+            sourceValue: target,
+            statuses: scope.statuses,
+            color: scope.color,
+            githubProjectUrl: scope.githubProjectUrl
+        };
+        this.plugin.settings.projectScopes.push(newScope);
+        await this.plugin.saveSettings();
+        for (const leaf of this.app.workspace.getLeavesOfType('habit-projects-view')) {
+            const projectsView = leaf.view as unknown as { setActiveScope?: (id: string) => Promise<void> };
+            await projectsView.setActiveScope?.(newScope.id);
+        }
+        return target;
     }
 }

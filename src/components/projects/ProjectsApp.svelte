@@ -12,7 +12,6 @@
     import Board from './Board.svelte';
     import ProjectCalendar from './ProjectCalendar.svelte';
     import ProjectDashboard from './ProjectDashboard.svelte';
-    import ProjectGallery from './ProjectGallery.svelte';
     import ProjectTable from './ProjectTable.svelte';
     import ProjectTimeline from './ProjectTimeline.svelte';
 
@@ -30,20 +29,29 @@
         { id: 'table', icon: 'table-2', label: 'table_view' },
         { id: 'calendar', icon: 'calendar-days', label: 'calendar_view' },
         { id: 'dashboard', icon: 'layout-dashboard', label: 'dashboard_view' },
-        { id: 'gallery', icon: 'images', label: 'gallery_view' },
         { id: 'timeline', icon: 'calendar-range', label: 'timeline_view' }
     ] as const;
 
     let bulkStatus = '';
+    let syncing = false;
+
+    async function syncGitHub(): Promise<void> {
+        if (syncing) return;
+        syncing = true;
+        try { await view.syncGitHub(); }
+        finally { syncing = false; }
+    }
 
     $: lang = plugin.settings.language;
     $: activeScope = plugin.settings.projectScopes?.find(scope => scope.id === $activeScopeId);
+    $: activeStats = $scopesWithStats.find(scope => scope.id === $activeScopeId);
     $: allTags = [...new Set($tasks.flatMap(task =>
         task.tags?.split(',').map(tag => tag.trim()).filter(Boolean) || []
     ))].sort((a, b) => a.localeCompare(b));
     $: habits = [...new Set($tasks.map(task => task.habitName).filter((value): value is string => Boolean(value)))].sort();
     $: ctx = {
         allTasks: $tasks,
+        archivedTasks: view.archivedTasks,
         filteredTasks: $filteredTasks,
         selectedTasks: $selectedTasks,
         compactMode: $compactMode,
@@ -70,37 +78,31 @@
     }
 </script>
 
-<div class="projects-app">
+<div class="projects-app" class:table-mode={$currentTab === 'table'}>
     {#if $scopesWithStats.length}
-        <nav class="scopes" aria-label={t(lang, 'projects_scopes_aria')}>
-            {#each $scopesWithStats as scope (scope.id)}
-                <button
-                    class="scope-card"
-                    class:active={$activeScopeId === scope.id}
-                    style={`--scope-color:${scope.color || 'var(--interactive-accent)'}`}
-                    aria-pressed={$activeScopeId === scope.id}
-                    on:click={() => void view.setActiveScope(scope.id)}
-                >
-                    <span class="scope-top">
-                        <span class="scope-name">{scope.name}</span>
-                        <span class="scope-pct">{scope.pct}%</span>
-                    </span>
-                    <span class="scope-bar"><span style={`width:${scope.pct}%`}></span></span>
-                    <span class="scope-counts">{scope.done}/{scope.total}</span>
-                </button>
-            {/each}
-        </nav>
+        <header class="project-heading">
+            <span class="project-heading-icon" use:icon={'folder-open'}></span>
+            <select value={$activeScopeId} aria-label={t(lang, 'projects_scopes_aria')} on:change={(event) => void view.setActiveScope(event.currentTarget.value)}>
+                {#each $scopesWithStats as scope (scope.id)}<option value={scope.id}>{scope.name}</option>{/each}
+            </select>
+            {#if activeStats}<span class="project-progress" style={`--scope-color:${activeStats.color || 'var(--interactive-accent)'}`}>
+                <span class="progress-dot"></span>{activeStats.done}/{activeStats.total} · {activeStats.pct}%
+            </span>{/if}
+            <button class="github-sync" disabled={syncing} title={lang === 'ru' ? 'Двусторонняя синхронизация с GitHub Projects' : 'Bidirectional GitHub Projects sync'} on:click={syncGitHub}>
+                <span use:icon={'refresh-cw'}></span>{syncing ? (lang === 'ru' ? 'Синхронизация…' : 'Syncing…') : 'GitHub Sync'}
+            </button>
+        </header>
     {/if}
 
-    <nav class="tabs" aria-label={t(lang, 'projects_tabs_aria')}>
+    {#if $currentTab !== 'table'}<nav class="tabs" aria-label={t(lang, 'projects_tabs_aria')}>
         {#each tabs as tab (tab.id)}
             <button class:active={$currentTab === tab.id} on:click={() => $currentTab = tab.id}>
                 <span class="tab-icon" use:icon={tab.icon}></span><span class="tab-label">{t(lang, tab.label)}</span>
             </button>
         {/each}
-    </nav>
+    </nav>{/if}
 
-    {#if activeScope}
+    {#if activeScope && $currentTab !== 'table'}
         <div class="filters">
             <div class="search">
                 <span use:icon={'search'}></span>
@@ -138,7 +140,8 @@
             </select>
             <button on:click={() => void view.duplicateSelected()}><span class="bulk-icon" use:icon={'copy'}></span>{t(lang, 'projects_bulk_duplicate')}</button>
             <button on:click={() => void view.exportSelected()}><span class="bulk-icon" use:icon={'download'}></span>{t(lang, 'projects_bulk_export')}</button>
-            <button class="danger" on:click={() => void view.deleteSelected()}><span class="bulk-icon" use:icon={'trash-2'}></span>{t(lang, 'projects_bulk_delete')}</button>
+            <button on:click={() => void view.archiveSelected()}><span class="bulk-icon" use:icon={'archive'}></span>{lang === 'ru' ? 'В архив' : 'Archive'}</button>
+            <button class="danger" on:click={() => void view.deleteSelected()}><span class="bulk-icon" use:icon={'trash-2'}></span>{lang === 'ru' ? 'Удалить из исходного файла' : 'Delete from source'}</button>
             <button class="clear" title={t(lang, 'projects_clear_selection')} aria-label={t(lang, 'projects_clear_selection')} on:click={() => view.clearSelection()}>
                 <span class="bulk-icon" use:icon={'x'}></span>
             </button>
@@ -156,13 +159,11 @@
         {:else if $currentTab === 'board'}
             <Board {plugin} {app} view={view.boardSubView} scope={activeScope} {ctx} />
         {:else if $currentTab === 'table'}
-            <ProjectTable {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
+            <ProjectTable {plugin} {app} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {:else if $currentTab === 'calendar'}
             <ProjectCalendar {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {:else if $currentTab === 'dashboard'}
             <ProjectDashboard {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
-        {:else if $currentTab === 'gallery'}
-            <ProjectGallery {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {:else if $currentTab === 'timeline'}
             <ProjectTimeline {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {/if}
@@ -171,23 +172,20 @@
 
 <style>
     .projects-app { display:flex; flex-direction:column; gap:10px; height:100%; min-height:0; padding:12px; overflow:hidden; }
+    .projects-app.table-mode { gap:0; padding:0; }
+    .projects-app.table-mode .project-heading { min-height:48px; padding:6px 16px; border-bottom:1px solid var(--background-modifier-border); }
 
-    .scopes { display:flex; flex-shrink:0; gap:8px; overflow-x:auto; padding-bottom:2px; }
-    .scope-card { position:relative; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; min-width:168px; max-width:220px; height:auto; min-height:0; padding:11px 14px 10px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); text-align:left; align-items:stretch; justify-content:flex-start; text-align:left; transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
-    .scope-card:hover { border-color:var(--background-modifier-border-hover); box-shadow:var(--shadow-m); transform:translateY(-1px); }
-    .scope-card.active { border-color:var(--scope-color); box-shadow:0 0 0 1px var(--scope-color), var(--shadow-s); }
-    .scope-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-    .scope-card > * { flex:0 0 auto; }
-    .scope-name { overflow:hidden; color:var(--text-normal); font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
-    .scope-pct { color:var(--scope-color); font-size:.78rem; font-weight:700; }
-    .scope-bar { height:6px; overflow:hidden; border-radius:3px; background:var(--background-modifier-border); }
-    .scope-bar span { display:block; height:100%; border-radius:3px; background:var(--scope-color); transition:width .25s ease; }
-    .scope-counts { color:var(--text-faint); font-size:.68rem; }
+    .project-heading { display:flex; align-items:center; gap:8px; flex:0 0 auto; min-height:34px; padding:0 4px; }
+    .project-heading-icon { width:17px; height:17px; color:var(--text-muted); }
+    .project-heading select { min-width:180px; max-width:min(420px,65vw); height:30px; padding:2px 22px 2px 3px; border:0; box-shadow:none; background:transparent; color:var(--text-normal); font-size:1.08rem; font-weight:700; }
+    .project-heading select:hover { background:var(--background-modifier-hover); }
+    .project-progress { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; border:1px solid var(--background-modifier-border); border-radius:12px; color:var(--text-muted); font-size:.7rem; white-space:nowrap; }
+    .progress-dot { width:7px; height:7px; border-radius:50%; background:var(--scope-color); }
 
-    .tabs { display:flex; flex-shrink:0; gap:4px; width:fit-content; max-width:100%; padding:4px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-secondary); overflow-x:auto; }
-    .tabs button { display:flex; flex:0 0 auto; align-items:center; justify-content:center; gap:7px; height:auto; min-height:0; padding:7px 13px; border:0; box-shadow:none; border-radius:var(--radius-m); background:transparent; color:var(--text-muted); font-size:.82rem; white-space:nowrap; transition:background .12s ease, color .12s ease; }
+    .tabs { display:flex; flex-shrink:0; gap:2px; width:100%; max-width:100%; padding:0; border:0; border-bottom:1px solid var(--background-modifier-border); border-radius:0; background:transparent; overflow-x:auto; }
+    .tabs button { display:flex; flex:0 0 auto; align-items:center; justify-content:center; gap:7px; height:auto; min-height:0; margin-bottom:-1px; padding:8px 13px; border:0; border-bottom:2px solid transparent; box-shadow:none; border-radius:0; background:transparent; color:var(--text-muted); font-size:.82rem; white-space:nowrap; transition:background .12s ease, color .12s ease; }
     .tabs button:hover { color:var(--text-normal); }
-    .tabs button.active { background:var(--interactive-accent); color:var(--text-on-accent); }
+    .tabs button.active { border-bottom-color:var(--interactive-accent); background:transparent; color:var(--text-normal); font-weight:600; }
     .tabs button .tab-icon { display:block; flex-shrink:0; width:15px; height:15px; }
     .tabs button .tab-icon :global(svg) { width:15px; height:15px; }
     .tabs button .tab-label { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -214,6 +212,9 @@
     .bulk .bulk-icon { display:block; flex-shrink:0; width:14px; height:14px; }
     .bulk .bulk-icon :global(svg) { width:14px; height:14px; }
     .bulk .danger { color:var(--text-error); }
+    .github-sync { display:inline-flex; align-items:center; gap:6px; margin-left:auto; padding:5px 9px; font-size:.75rem; white-space:nowrap; }
+    .github-sync span { display:block; width:14px; height:14px; }
+    .github-sync span :global(svg) { width:14px; height:14px; }
     .bulk .clear { width:30px; height:30px; justify-content:center; padding:6px; }
 
     main { position:relative; flex:1; min-height:0; overflow:auto; }

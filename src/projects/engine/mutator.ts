@@ -4,7 +4,7 @@ import type { ProjectScopeDefinition, ProjectTask, TaskData } from '../types';
 import { isDone } from '../../utils/status';
 import type { ProjectParser } from './parser';
 import { findTaskBlockEnd } from './task-block';
-import { blockIdFromTaskLine, ensureTaskBlockIds } from './task-identity';
+import { blockIdFromTaskLine, newTaskBlockId } from './task-identity';
 import type { TimerView } from '../../timer/timer-view';
 import { getCommunityPlugin, getTemplaterPlugin } from '../community-plugins';
 
@@ -14,6 +14,24 @@ export class ProjectMutator {
         private plugin: HabitTimerPlugin,
         private parser: ProjectParser
     ) {}
+
+    async moveTaskBefore(scope: ProjectScopeDefinition, source: ProjectTask, target: ProjectTask): Promise<void> {
+        if (source.id === target.id) return;
+        if (scope.sourceType === 'file') {
+            if (source.file.path !== target.file.path || source.section !== target.section) return;
+            const content = await this.app.vault.read(source.file);
+            const lines = content.split('\n');
+            const sourceMatch = this.parser.findTaskLineIndex(lines, source.name, source.blockId);
+            const targetMatch = this.parser.findTaskLineIndex(lines, target.name, target.blockId);
+            if (sourceMatch.lineIdx < 0 || targetMatch.lineIdx < 0) return;
+            const end = findTaskBlockEnd(lines, sourceMatch.lineIdx, sourceMatch.indent);
+            const block = lines.splice(sourceMatch.lineIdx, end - sourceMatch.lineIdx);
+            const destination = targetMatch.lineIdx > sourceMatch.lineIdx
+                ? targetMatch.lineIdx - block.length : targetMatch.lineIdx;
+            lines.splice(destination, 0, ...block);
+            await this.app.vault.modify(source.file, lines.join('\n'));
+        }
+    }
 
     async toggleSubtask(file: TFile, lineNum: number, checked: boolean): Promise<void> {
         const content = await this.app.vault.read(file);
@@ -85,7 +103,8 @@ export class ProjectMutator {
             let taskIndent = " ".repeat(_indent);
 
             if (taskLineIdx !== -1) {
-                const blockId = blockIdFromTaskLine(lines[taskLineIdx]!);
+                const blockId = blockIdFromTaskLine(lines[taskLineIdx]!) || newTaskBlockId(content);
+                const archiveStr = lines[taskLineIdx]!.includes('<!-- project-archived -->') ? ' <!-- project-archived -->' : '';
                 let markers = "";
                 if (data.timeEstimated) markers += ` ⏳ ${data.timeEstimated}`;
                 if (data.habitName) markers += ` 🏷️ ${data.habitName}`;
@@ -107,8 +126,11 @@ export class ProjectMutator {
                 const spentMatch = lines[taskLineIdx]!.match(/⏱️[ \t]*([\d:]+)/);
                 if (spentMatch) spentStr = ` ⏱️ ${spentMatch[1]}`;
 
-                const box = taskChecked ? '[x]' : '[ ]';
-                lines[taskLineIdx] = `${taskIndent}- ${box} ${data.name}${markers}${pIcon}${spentStr}${blockId ? ` ^${blockId}` : ''}`;
+                const isSectionDone = data.section && (isDone(data.status) || data.status === columns?.[columns.length - 1]);
+                const box = data.section ? (isSectionDone ? '[x]' : '[ ]') : (taskChecked ? '[x]' : '[ ]');
+                const inlineStatus = data.section && data.status !== columns?.[0] && !isSectionDone
+                    ? ` <!-- project-status: ${data.status.replace(/-->/g, '')} -->` : '';
+                lines[taskLineIdx] = `${taskIndent}- ${box} ${data.name}${markers}${pIcon}${spentStr}${inlineStatus}${archiveStr} ^${blockId}`;
 
                 let currentLineStatus = columns ? columns[0] : 'Backlog';
                 for (let j = 0; j < taskLineIdx; j++) {
@@ -120,7 +142,7 @@ export class ProjectMutator {
                     }
                 }
 
-                if (columns && data.status !== currentLineStatus) {
+                if (columns && data.status !== currentLineStatus && !data.section) {
                     const indentSize = taskIndent.length;
                     const blockEnd = findTaskBlockEnd(lines, taskLineIdx, indentSize);
                     const blockLines = lines.slice(taskLineIdx, blockEnd);
@@ -225,9 +247,30 @@ export class ProjectMutator {
                     else if (data.priority.toLowerCase() === 'low' || data.priority.toLowerCase() === 'низкий') pIcon = " 🔽";
                 }
 
-                const newTaskLine = `- [ ] ${data.name}${markers}${pIcon}`;
+                const isNewDone = data.status && (isDone(data.status) || data.status === columns[columns.length - 1]);
+                const inlineStatus = data.section && data.status && data.status !== firstCol && !isNewDone
+                    ? ` <!-- project-status: ${data.status.replace(/-->/g, '')} -->` : '';
+                const newTaskLine = `- ${isNewDone ? '[x]' : '[ ]'} ${data.name}${markers}${pIcon}${inlineStatus} ^${newTaskBlockId(content)}`;
 
-                if (targetIdx !== -1) {
+                if (data.section) {
+                    const sectionIdx = lines.findIndex(line => {
+                        const heading = line.match(/^##[ \t]+(.*)$/);
+                        return heading?.[1]?.trim() === data.section;
+                    });
+                    if (sectionIdx !== -1) {
+                        let sectionEnd = sectionIdx + 1;
+                        while (sectionEnd < lines.length && !/^#{1,2}[ \t]+/.test(lines[sectionEnd] || '')) sectionEnd++;
+                        let lastCheckbox = -1;
+                        for (let index = sectionIdx + 1; index < sectionEnd; index++) {
+                            if (/^[ \t]*-[ \t]+\[[ xX]\]/.test(lines[index] || '')) lastCheckbox = index;
+                        }
+                        const indent = lastCheckbox < 0 ? 0 : (lines[lastCheckbox]!.match(/^([ \t]*)/)?.[1]?.length || 0);
+                        const insertIdx = lastCheckbox < 0 ? sectionEnd : findTaskBlockEnd(lines, lastCheckbox, indent);
+                        lines.splice(insertIdx, 0, newTaskLine);
+                    } else {
+                        lines.push(`\n## ${data.section}`, newTaskLine);
+                    }
+                } else if (targetIdx !== -1) {
                     let lastTaskLineInSection = targetIdx;
                     let scanIdx = targetIdx + 1;
                     while (scanIdx < lines.length) {
@@ -244,8 +287,7 @@ export class ProjectMutator {
                     lines.push(newTaskLine);
                 }
 
-                const identified = ensureTaskBlockIds(lines.join('\n'), file.path);
-                await this.app.vault.modify(file, identified.content);
+                await this.app.vault.modify(file, lines.join('\n'));
                 await this.plugin.updateDailyNoteProjectLog();
             } else {
                 new Notice("Scope file not found: " + scope.sourceValue);
@@ -346,6 +388,30 @@ export class ProjectMutator {
             await this.app.fileManager.trashFile(task.file);
         }
         await this.plugin.updateDailyNoteProjectLog();
+    }
+
+    async setArchived(task: ProjectTask, archived: boolean, isSingleFileTask?: boolean): Promise<void> {
+        if (isSingleFileTask) {
+            const content = await this.app.vault.read(task.file);
+            const lines = content.split('\n');
+            const { lineIdx } = this.parser.findTaskLineIndex(lines, task.name, task.blockId);
+            if (lineIdx < 0) throw new Error(`Task not found: ${task.name}`);
+            const original = lines[lineIdx]!;
+            const marker = ' <!-- project-archived -->';
+            let updated = original.replace(marker, '');
+            if (archived) {
+                const blockId = blockIdFromTaskLine(updated);
+                if (blockId) updated = updated.replace(/\s+\^[A-Za-z0-9-]+\s*$/, `${marker} ^${blockId}`);
+                else updated = `${updated.trimEnd()}${marker} ^${newTaskBlockId(content)}`;
+            }
+            lines[lineIdx] = updated;
+            await this.app.vault.modify(task.file, lines.join('\n'));
+        } else {
+            await this.app.fileManager.processFrontMatter(task.file, frontmatter => {
+                if (archived) frontmatter['project_archived'] = true;
+                else delete frontmatter['project_archived'];
+            });
+        }
     }
 
     async startTimerForTask(task: ProjectTask, isSingleFileTask?: boolean) {

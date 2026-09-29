@@ -5,6 +5,7 @@ import type { ProjectScopeDefinition, ProjectTask } from '../types';
 
 export interface ViewContext {
     allTasks: ProjectTask[];
+    archivedTasks?: ProjectTask[];
     filteredTasks: ProjectTask[];
     selectedTasks: Set<string>;
     compactMode: boolean;

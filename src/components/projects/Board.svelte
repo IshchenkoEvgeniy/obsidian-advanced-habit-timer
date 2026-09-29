@@ -32,7 +32,7 @@ import { isDone } from '../../utils/status';
         name,
         color: columnColor(name, index === columns.length - 1),
         isCollapsed: collapsedColumns.has(name),
-        tasks: ctx.filteredTasks
+        tasks: ctx.filteredTasks.filter(task => !task.parentId)
             .filter(task => task.status === name)
             .sort((a, b) => (a.order || 0) - (b.order || 0))
     }));

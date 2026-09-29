@@ -51,6 +51,7 @@ export class TaskEditorModal extends Modal {
             color: initialData.color || "",
             tags: initialData.tags || "",
             priority: initialData.priority || "",
+            section: initialData.section,
             order: initialData.order || 0
         };
     }
