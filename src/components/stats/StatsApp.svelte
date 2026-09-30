@@ -5,7 +5,7 @@
     import { currentStatsTab, isStatsLoading, viewMode } from '../../store/StatsStore';
     import { t } from '../../i18n';
 
-    import AnalyticsMain from './AnalyticsMain.svelte';
+    import MonthlyAnalytics from './MonthlyAnalytics.svelte';
     import AnalyticsDetail from './AnalyticsDetail.svelte';
     import Gamification from './Gamification.svelte';
 
@@ -14,7 +14,7 @@
     export let view: any;
 
     // Prevent TS from stripping imports
-    const _keep = [AnalyticsMain, AnalyticsDetail, Gamification, t, currentStatsTab, isStatsLoading, viewMode];
+    const _keep = [MonthlyAnalytics, AnalyticsDetail, Gamification, t, currentStatsTab, isStatsLoading, viewMode];
 
     let lang = plugin.settings.language;
 </script>
@@ -36,7 +36,7 @@
     {:else}
         {#if $currentStatsTab === 'analytics'}
             {#if $viewMode === 'main'}
-                <AnalyticsMain {plugin} {app} {view} />
+                <MonthlyAnalytics {plugin} />
             {:else}
                 <AnalyticsDetail {plugin} {app} {view} />
             {/if}

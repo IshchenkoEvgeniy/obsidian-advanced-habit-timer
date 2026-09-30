@@ -9,7 +9,7 @@ import {
     getHabitGoals, readHabitExplicitState
 } from '../habits/goals';
 
-export interface SessionRecord { startHour: number; durationSec: number; subTask?: string; task?: string; }
+export interface SessionRecord { startHour: number; startTimeMinutes?: number; durationSec: number; subTask?: string; task?: string; }
 export interface DailyRecord {
     date: string;
     habit: string;
@@ -29,6 +29,7 @@ export const recordsIndex = writable<Map<string, Map<string, DailyRecord>>>(new 
 
 export const currentStatsTab = writable<'analytics' | 'gamification'>('analytics');
 export const currentPeriod = writable<'day' | 'week' | 'month' | 'd90' | 'half' | 'year' | 'all'>('month');
+export const selectedStatsMonth = writable<string>(moment().format('YYYY-MM'));
 export const selectedStatsHabit = writable<string | null>(null);
 export const viewMode = writable<'main' | 'detail'>('main');
 
@@ -66,6 +67,8 @@ export async function reloadStatsData(app: App, plugin: HabitTimerPlugin) {
             const m = line.match(SESSION_ROW_REGEX);
             if (m && m[1] && m[2] && m[3]) {
                 const startHour = parseInt(m[1]);
+                const startTime = line.match(/\|\s*(\d{2}):(\d{2})\s*-/);
+                const startTimeMinutes = startTime ? Number(startTime[1]) * 60 + Number(startTime[2]) : startHour * 60;
                 const rawHabit = m[2].trim();
                 const parts = rawHabit.split(':');
                 const habitName = (parts[0] || rawHabit).trim();
@@ -75,7 +78,7 @@ export async function reloadStatsData(app: App, plugin: HabitTimerPlugin) {
                 const sec = parseDuration(m[3]);
                 if (sec > 0) {
                     if (!dailySessions[habitName]) dailySessions[habitName] = [];
-                    dailySessions[habitName].push({ startHour, durationSec: sec, subTask, task });
+                    dailySessions[habitName].push({ startHour, startTimeMinutes, durationSec: sec, subTask, task });
                 }
             }
         }

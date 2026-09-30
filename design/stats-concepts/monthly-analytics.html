@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Аналитика — сентябрь 2026</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090a0b;
+      --panel: #101112;
+      --card: #1b1c1d;
+      --border: #292b2d;
+      --text: #ededee;
+      --muted: #74777b;
+      --quiet: #505358;
+      --green: #55d5a2;
+      --yellow: #ffb629;
+      --blue: #49b5ff;
+      --red: #ff6868;
+      --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); }
+    button { font: inherit; }
+    .page { width: min(100% - 32px, 980px); margin: 0 auto; padding: 18px 0 40px; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 17px; }
+    h1 { margin: 0; font-size: clamp(18px, 2.7vw, 22px); line-height: 1.25; font-weight: 650; letter-spacing: -.025em; }
+    .exports { display: flex; flex-wrap: wrap; gap: 9px; }
+    .export-btn {
+      min-height: 34px; padding: 0 17px; border: 1px solid #303235; border-radius: 11px;
+      color: var(--text); background: #1b1c1e; font-size: 12px; cursor: pointer;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+    .export-btn:hover { background: #27292b; border-color: #44474a; transform: translateY(-1px); }
+    .export-btn:focus-visible, .habit-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+
+    .panel { border: 1px solid var(--border); border-radius: 17px; background: var(--panel); }
+    .trend-panel { padding: 19px 18px 17px; }
+    .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 12px; }
+    .eyebrow, .month-tag { margin: 0; color: var(--muted); font: 500 11px/1.4 var(--mono); letter-spacing: .055em; text-transform: uppercase; }
+    .month-tag { color: #c8c9ca; }
+    .chart-wrap { width: 100%; }
+    .chart { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart-grid { stroke: #222426; stroke-width: 1; }
+    .chart-area { fill: var(--green); opacity: .09; }
+    .chart-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .chart-line.reading { stroke: var(--green); }
+    .chart-line.programming { stroke: var(--yellow); }
+    .chart-line.english { stroke: var(--blue); }
+    .axis-label { fill: #777a7d; font: 10px var(--mono); letter-spacing: .04em; }
+    .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding: 7px 1px 0; }
+    .legend-item { display: inline-flex; align-items: center; gap: 8px; color: #a8aaac; font: 11px var(--mono); white-space: nowrap; }
+    .legend-mark { display: inline-block; width: 13px; height: 3px; border-radius: 5px; }
+    .legend-mark.reading { background: var(--green); }
+    .legend-mark.programming { background: var(--yellow); }
+    .legend-mark.english { background: var(--blue); }
+    .legend-value { color: #c5c6c8; }
+
+    .summary-panel { margin-top: 15px; padding: 19px 18px 18px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; margin-top: 14px; }
+    .metric {
+      min-height: 103px; padding: 15px 16px 12px; border: 1px solid #303234; border-radius: 13px; background: var(--card);
+    }
+    .metric-value { margin: 0 0 6px; font: 500 clamp(20px, 3vw, 23px)/1.15 var(--mono); letter-spacing: .025em; font-variant-numeric: tabular-nums; }
+    .metric-label { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; letter-spacing: .055em; text-transform: uppercase; }
+    .metric-delta { margin: 7px 0 0; color: var(--green); font: 500 11px/1.3 var(--mono); }
+    .metric-delta.down { color: var(--red); }
+
+    .table-panel { margin-top: 15px; padding: 19px 18px 10px; }
+    .table-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .table-heading h2 { margin: 0; color: #d9dadb; font: 500 11px/1.4 var(--mono); letter-spacing: .055em; text-transform: uppercase; }
+    .table-note { color: var(--muted); font-size: 11px; }
+    .table-scroll { overflow-x: auto; scrollbar-color: #45484b transparent; }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; text-align: left; }
+    caption { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    th { padding: 11px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 550; letter-spacing: .045em; text-transform: uppercase; white-space: nowrap; }
+    td { padding: 13px 10px; border-bottom: 1px solid #222426; color: #c6c8ca; font-size: 12px; white-space: nowrap; }
+    th.numeric, td.numeric { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    tbody tr:last-child td { border-bottom: 1px solid var(--border); }
+    tfoot td { color: #f0f0f0; font-weight: 600; }
+    .habit-cell { display: flex; align-items: center; gap: 9px; color: var(--text); font-weight: 550; }
+    .habit-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .habit-dot.reading { background: var(--green); }
+    .habit-dot.programming { background: var(--yellow); }
+    .habit-dot.english { background: var(--blue); }
+    .share-cell { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .share-track { width: 48px; height: 4px; overflow: hidden; border-radius: 5px; background: #303234; }
+    .share-fill { display: block; height: 100%; border-radius: inherit; }
+    .share-fill.reading { width: 35%; background: var(--green); }
+    .share-fill.programming { width: 40%; background: var(--yellow); }
+    .share-fill.english { width: 25%; background: var(--blue); }
+    .share-fill.total { width: 100%; background: #a6a8aa; }
+    .up { color: var(--green); }
+    .down { color: var(--red); }
+    .toast { position: fixed; right: 18px; bottom: 18px; z-index: 2; padding: 10px 14px; border: 1px solid #34383a; border-radius: 10px; background: #202224; color: var(--text); font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 560px) {
+      .page { width: min(100% - 22px, 980px); padding-top: 13px; }
+      .topbar { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 13px; }
+      .exports { width: 100%; gap: 7px; }
+      .export-btn { flex: 1; padding: 0 10px; }
+      .trend-panel, .summary-panel, .table-panel { padding-left: 13px; padding-right: 13px; border-radius: 14px; }
+      .summary-grid { grid-template-columns: 1fr; gap: 8px; }
+      .metric { min-height: 90px; }
+      .legend { gap: 9px 15px; }
+      .legend-item { font-size: 10px; }
+      .table-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <h1>Аналитика · сентябрь 2026</h1>
+      <nav class="exports" aria-label="Экспорт отчёта">
+        <button class="export-btn" type="button" data-export="csv">CSV</button>
+        <button class="export-btn" type="button" data-export="json">JSON</button>
+        <button class="export-btn" type="button" data-export="md">MD-отчёт</button>
+      </nav>
+    </header>
+
+    <section class="panel trend-panel" aria-labelledby="trend-title">
+      <div class="panel-heading">
+        <h2 class="eyebrow" id="trend-title">Динамика фокуса по дням</h2>
+        <span class="month-tag">Сентябрь</span>
+      </div>
+      <div class="chart-wrap">
+        <svg class="chart" viewBox="0 0 720 250" role="img" aria-labelledby="chart-title chart-desc">
+          <title id="chart-title">Фокус по дням сентября</title>
+          <desc id="chart-desc">Линейный график времени фокуса для чтения, программирования и английского языка. Значения показаны по дням месяца.</desc>
+          <line class="chart-grid" x1="20" y1="42" x2="700" y2="42" />
+          <line class="chart-grid" x1="20" y1="96" x2="700" y2="96" />
+          <line class="chart-grid" x1="20" y1="150" x2="700" y2="150" />
+          <line class="chart-grid" x1="20" y1="204" x2="700" y2="204" />
+          <polygon class="chart-area" points="20,136 65,128 110,144 155,117 200,104 245,131 290,96 335,112 380,88 425,109 470,80 515,101 560,71 605,91 650,64 700,77 700,204 20,204" />
+          <polyline class="chart-line reading" points="20,136 65,128 110,144 155,117 200,104 245,131 290,96 335,112 380,88 425,109 470,80 515,101 560,71 605,91 650,64 700,77" />
+          <polyline class="chart-line programming" points="20,175 65,164 110,173 155,148 200,159 245,137 290,156 335,124 380,142 425,118 470,134 515,108 560,122 605,90 650,104 700,84" />
+          <polyline class="chart-line english" points="20,198 65,193 110,200 155,187 200,193 245,182 290,190 335,179 380,189 425,174 470,184 515,168 560,178 605,162 650,172 700,157" />
+          <text class="axis-label" x="20" y="226">01.09</text>
+          <text class="axis-label" x="176" y="226">07.09</text>
+          <text class="axis-label" x="335" y="226">14.09</text>
+          <text class="axis-label" x="494" y="226">21.09</text>
+          <text class="axis-label" x="647" y="226">28.09</text>
+        </svg>
+      </div>
+      <div class="legend" aria-label="Привычки на графике">
+        <span class="legend-item"><i class="legend-mark reading"></i>Чтение <b class="legend-value">24:36</b></span>
+        <span class="legend-item"><i class="legend-mark programming"></i>Программирование <b class="legend-value">28:12</b></span>
+        <span class="legend-item"><i class="legend-mark english"></i>Английский <b class="legend-value">17:20</b></span>
+      </div>
+    </section>
+
+    <section class="panel summary-panel" aria-labelledby="summary-title">
+      <h2 class="eyebrow" id="summary-title">Сводка месяца</h2>
+      <div class="summary-grid">
+        <article class="metric">
+          <p class="metric-value">70:08</p><p class="metric-label">Всего фокуса</p><p class="metric-delta">▲ +9% к августу</p>
+        </article>
+        <article class="metric">
+          <p class="metric-value">2:16</p><p class="metric-label">В среднем за день</p><p class="metric-delta">▲ +0:11</p>
+        </article>
+        <article class="metric">
+          <p class="metric-value">93%</p><p class="metric-label">Дней с целью</p><p class="metric-delta down">▼ 2 пропуска</p>
+        </article>
+        <article class="metric">
+          <p class="metric-value">124</p><p class="metric-label">Сессий</p><p class="metric-delta">▲ +12</p>
+        </article>
+        <article class="metric">
+          <p class="metric-value">1:58</p><p class="metric-label">Лучшая сессия</p><p class="metric-delta">пн · 09:12</p>
+        </article>
+        <article class="metric">
+          <p class="metric-value">09:24</p><p class="metric-label">Средний старт</p><p class="metric-delta down">▲ раньше на 12 мин</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel table-panel" aria-labelledby="habits-title">
+      <div class="table-heading">
+        <h2 id="habits-title">Статистика по привычкам</h2>
+        <span class="table-note">Сентябрь 2026 · сравнение с августом</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <caption>Месячная статистика фокуса по каждой привычке</caption>
+          <thead>
+            <tr>
+              <th scope="col">Привычка</th>
+              <th scope="col" class="numeric">Фокус</th>
+              <th scope="col" class="numeric">Доля</th>
+              <th scope="col" class="numeric">Сессий</th>
+              <th scope="col" class="numeric">Средняя</th>
+              <th scope="col" class="numeric">Цель</th>
+              <th scope="col" class="numeric">Рекорд</th>
+              <th scope="col" class="numeric">Старт</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="habit-cell"><i class="habit-dot reading"></i>Чтение</span></td>
+              <td class="numeric">24:36</td>
+              <td class="numeric"><span class="share-cell"><span class="share-track"><i class="share-fill reading"></i></span>35%</span></td>
+              <td class="numeric">43</td><td class="numeric">0:34</td><td class="numeric">97%</td><td class="numeric">1:58</td><td class="numeric">09:12</td>
+            </tr>
+            <tr>
+              <td><span class="habit-cell"><i class="habit-dot programming"></i>Программирование</span></td>
+              <td class="numeric">28:12</td>
+              <td class="numeric"><span class="share-cell"><span class="share-track"><i class="share-fill programming"></i></span>40%</span></td>
+              <td class="numeric">51</td><td class="numeric">0:33</td><td class="numeric">90%</td><td class="numeric">1:42</td><td class="numeric">09:46</td>
+            </tr>
+            <tr>
+              <td><span class="habit-cell"><i class="habit-dot english"></i>Английский</span></td>
+              <td class="numeric">17:20</td>
+              <td class="numeric"><span class="share-cell"><span class="share-track"><i class="share-fill english"></i></span>25%</span></td>
+              <td class="numeric">30</td><td class="numeric">0:35</td><td class="numeric">93%</td><td class="numeric">1:12</td><td class="numeric">08:54</td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>Итого</td><td class="numeric">70:08</td>
+              <td class="numeric"><span class="share-cell"><span class="share-track"><i class="share-fill total"></i></span>100%</span></td>
+              <td class="numeric">124</td><td class="numeric">0:34</td><td class="numeric">93%</td><td class="numeric">1:58</td><td class="numeric">09:24</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const report = {
+      period: "Сентябрь 2026",
+      summary: {
+        focus: "70:08",
+        averagePerDay: "2:16",
+        goalDays: "93%",
+        sessions: 124,
+        bestSession: "1:58",
+        averageStart: "09:24"
+      },
+      habits: [
+        { name: "Чтение", focus: "24:36", share: "35%", sessions: 43, average: "0:34", goal: "97%", best: "1:58", start: "09:12" },
+        { name: "Программирование", focus: "28:12", share: "40%", sessions: 51, average: "0:33", goal: "90%", best: "1:42", start: "09:46" },
+        { name: "Английский", focus: "17:20", share: "25%", sessions: 30, average: "0:35", goal: "93%", best: "1:12", start: "08:54" }
+      ]
+    };
+
+    const toast = document.querySelector(".toast");
+    let toastTimer;
+    function download(name, content, type) {
+      const url = URL.createObjectURL(new Blob([content], { type }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.textContent = `Подготовлен файл ${name}`;
+      toast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 2400);
+    }
+    document.querySelectorAll("[data-export]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const kind = button.dataset.export;
+        const filename = "analytics-2026-09";
+        if (kind === "json") {
+          download(`${filename}.json`, JSON.stringify(report, null, 2), "application/json;charset=utf-8");
+        } else if (kind === "csv") {
+          const headers = ["Привычка", "Фокус", "Доля", "Сессий", "Средняя сессия", "Цель", "Лучшая сессия", "Средний старт"];
+          const rows = report.habits.map((habit) => [habit.name, habit.focus, habit.share, habit.sessions, habit.average, habit.goal, habit.best, habit.start]);
+          const csv = [headers, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+          download(`${filename}.csv`, `\uFEFF${csv}`, "text/csv;charset=utf-8");
+        } else {
+          const rows = report.habits.map((habit) => `| ${habit.name} | ${habit.focus} | ${habit.share} | ${habit.sessions} | ${habit.average} | ${habit.goal} | ${habit.best} | ${habit.start} |`);
+          const markdown = [
+            `# Аналитика — ${report.period}`, "", "## Сводка месяца", "",
+            `- Всего фокуса: ${report.summary.focus}`,
+            `- В среднем за день: ${report.summary.averagePerDay}`,
+            `- Дней с целью: ${report.summary.goalDays}`,
+            `- Сессий: ${report.summary.sessions}`,
+            `- Лучшая сессия: ${report.summary.bestSession}`,
+            `- Средний старт: ${report.summary.averageStart}`, "", "## По привычкам", "",
+            `| Привычка | Фокус | Доля | Сессий | Средняя сессия | Цель | Рекорд | Старт |`,
+            `| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |`,
+            ...rows, ""
+          ].join("\n");
+          download(`${filename}.md`, markdown, "text/markdown;charset=utf-8");
+        }
+      });
+    });
+  </script>
+</body>
+</html>

@@ -2,8 +2,7 @@
     import type { App } from 'obsidian';
     import type HabitTimerPlugin from '../../main';
     import { t } from '../../i18n';
-    import { allRecords, currentPeriod, selectedStatsHabit, viewMode } from '../../store/StatsStore';
-    import { inPeriod } from '../../stats/periods';
+    import { allRecords, selectedStatsHabit, selectedStatsMonth, viewMode } from '../../store/StatsStore';
     import { formatDurationShort } from '../../utils';
     import { moment } from 'obsidian';
     import BarChart from '../charts/BarChart.svelte';
@@ -15,7 +14,7 @@
     // view is passed for external reference but not used internally
     export const view: any = undefined;
 
-    const _keep = [BarChart, Heatmap, t, allRecords, currentPeriod, selectedStatsHabit, viewMode, formatDurationShort, DaySummaryModal];
+    const _keep = [BarChart, Heatmap, t, allRecords, selectedStatsHabit, selectedStatsMonth, viewMode, formatDurationShort, DaySummaryModal];
     let lang = plugin.settings.language;
 
     $: habitName = $selectedStatsHabit!;
@@ -24,11 +23,8 @@
     
     $: habitAllRecords = $allRecords.filter(r => r.habit === habitName);
     
-    // Filtered by currentPeriod
-    $: records = (() => {
-        const today = window.moment().format('YYYY-MM-DD');
-        return habitAllRecords.filter(rec => inPeriod(rec.date, $currentPeriod, today));
-    })();
+    // Keep the detail view aligned with the month selected on the monthly report.
+    $: records = habitAllRecords.filter(rec => rec.date.startsWith(`${$selectedStatsMonth}-`));
 
     $: maxDaily = Math.max(...habitAllRecords.map(r => r.durationSec), 0);
     $: longestSession = Math.max(...habitAllRecords.flatMap(r => r.sessions?.map(s => s.durationSec) || [0]), 0);
