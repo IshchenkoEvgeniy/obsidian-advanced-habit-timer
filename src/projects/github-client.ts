@@ -21,6 +21,13 @@ export interface GitHubItem {
     subIssues?: { completed: number; total: number };
     issueState?: 'OPEN' | 'CLOSED';
     parentIssueId?: string;
+    issueNumber?: number;
+    closedAt?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+    labels?: string[];
+    milestone?: string;
+    issueType?: string;
 }
 
 export interface GitHubProjectSnapshot {
@@ -41,7 +48,10 @@ interface ItemNode {
     isArchived: boolean;
     content: { __typename: GitHubItem['contentType']; id: string; title: string; body?: string; url?: string;
         assignees?: { nodes: { login: string }[] }; subIssuesSummary?: { completed: number; total: number };
-        state?: 'OPEN' | 'CLOSED'; parent?: { id: string } | null } | null;
+        state?: 'OPEN' | 'CLOSED'; parent?: { id: string } | null;
+        number?: number; closedAt?: string | null; createdAt?: string; updatedAt?: string;
+        labels?: { nodes: { name: string }[] }; milestone?: { title: string } | null;
+        issueType?: { name: string } | null } | null;
     fieldValues: { nodes: ({ __typename: string; name?: string; title?: string; text?: string; number?: number; date?: string; value?: string;
         field?: { name: string }; users?: { nodes: { login: string }[] }; pullRequests?: { nodes: { number: number }[] } } | null)[] };
 }
@@ -80,7 +90,9 @@ fragment ProjectData on ProjectV2 {
     nodes { id isArchived content {
       __typename
       ... on DraftIssue { id title body }
-      ... on Issue { id title body url state parent { id } assignees(first: 10) { nodes { login } } subIssuesSummary { completed total } }
+      ... on Issue { id title body url state number closedAt createdAt updatedAt parent { id }
+        assignees(first: 100) { nodes { login } } labels(first: 100) { nodes { name } }
+        milestone { title } issueType { name } subIssuesSummary { completed total } }
       ... on PullRequest { id title body url assignees(first: 10) { nodes { login } } }
     } fieldValues(first: 50) { nodes {
       __typename
@@ -150,7 +162,11 @@ export class GitHubProjectsClient {
                     status: String(fields.Status || ''), archived: node.isArchived, fields,
                     assignees: node.content.assignees?.nodes.filter(Boolean).map(user => user.login),
                     subIssues: node.content.subIssuesSummary, issueState: node.content.state,
-                    parentIssueId: node.content.parent?.id
+                    parentIssueId: node.content.parent?.id, issueNumber: node.content.number,
+                    closedAt: node.content.closedAt, createdAt: node.content.createdAt,
+                    updatedAt: node.content.updatedAt,
+                    labels: node.content.labels?.nodes.filter(Boolean).map(label => label.name),
+                    milestone: node.content.milestone?.title, issueType: node.content.issueType?.name
                 });
             }
             cursor = project.items.pageInfo.hasNextPage ? project.items.pageInfo.endCursor : null;

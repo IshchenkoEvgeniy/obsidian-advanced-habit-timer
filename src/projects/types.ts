@@ -27,6 +27,15 @@ export interface ProjectScopeDefinition {
         url?: string;
         baseTitle: string;
         baseClosed?: boolean;
+        baseDescription?: string;
+        baseStatus?: string;
+        localFields?: Record<string, string | number>;
+        baseFields?: Record<string, string | number>;
+        meta?: {
+            fields: Record<string, string | number>;
+            assignees?: string[];
+            subIssues?: { completed: number; total: number };
+        };
     }>;
     githubChecklistGroups?: Record<string, {
         itemId: string;
@@ -82,6 +91,8 @@ export interface ProjectTask {
     priority?: string;
     /** Nearest level-two heading in a checklist file, or child folder in a folder scope. */
     section?: string;
+    /** Persistent key for a structured checklist stage, retained when its heading changes. */
+    sectionKey?: string;
     images?: string[];
     subtasks?: ProjectSubtask[];
     order?: number;
@@ -92,6 +103,10 @@ export interface ProjectTask {
     archived?: boolean;
     /** Numbered headings above a checkbox in a structured Markdown checklist. */
     checklistAncestors?: { id: string; title: string; sourceLine: number }[];
+    /** Full Markdown body is kept in a sibling task note when present. */
+    description?: string;
+    notePath?: string;
+    completedAt?: string | null;
 }
 
 export function projectTaskId(filePath: string, sourceLine?: number, blockId?: string): string {
@@ -114,4 +129,5 @@ export interface TaskData {
     priority?: string;
     section?: string;
     order?: number;
+    description?: string;
 }

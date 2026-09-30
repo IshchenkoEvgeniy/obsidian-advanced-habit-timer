@@ -18,6 +18,7 @@ export function projectTaskToData(
         priority: task.priority,
         section: task.section,
         order: task.order || 0,
+        description: task.description || '',
         ...changes
     };
 }

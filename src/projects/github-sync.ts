@@ -124,7 +124,26 @@ export function planGitHubSync(scope: ProjectScopeDefinition, tasks: ProjectTask
     }
     for (const task of tasks) {
         if (usedLocal.has(task.id)) continue;
-        const candidates = titles.get(titleKey(task.name)) || [];
+        const marker = `<!-- obsidian-project-task: ${scope.id}/${task.id} -->`;
+        const marked = snapshot.items.filter(item => !usedRemote.has(item.id) && item.body.includes(marker));
+        if (marked.length > 1) {
+            ambiguous.push(`Multiple GitHub items have the same task marker: ${task.name}`);
+            continue;
+        }
+        if (marked.length === 1) {
+            const item = marked[0]!;
+            usedRemote.add(item.id);
+            usedLocal.add(task.id);
+            const local = localValues(task);
+            const remote = remoteValues(item, scope, task.status);
+            const pull: SyncedField[] = [];
+            if (local.status !== remote.status && remote.status) pull.push('status');
+            if (local.archived !== remote.archived) pull.push('archived');
+            pairs.push({ task, item, pull, push: local.name !== item.title ? ['name'] : [], conflict: [],
+                pullFields: [], pushFields: [], conflictFields: [], newlyLinked: true });
+            continue;
+        }
+        const candidates = titles.get(titleKey(task.name))?.filter(item => !usedRemote.has(item.id)) || [];
         if (candidates.length > 1 || (candidates.length && (localTitleCounts.get(titleKey(task.name)) || 0) > 1)) {
             ambiguous.push(`Ambiguous title: ${task.name}`);
             continue;

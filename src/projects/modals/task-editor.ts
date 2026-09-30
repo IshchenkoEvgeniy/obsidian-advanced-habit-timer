@@ -52,7 +52,8 @@ export class TaskEditorModal extends Modal {
             tags: initialData.tags || "",
             priority: initialData.priority || "",
             section: initialData.section,
-            order: initialData.order || 0
+            order: initialData.order || 0,
+            description: initialData.description || ''
         };
     }
 
@@ -96,6 +97,14 @@ export class TaskEditorModal extends Modal {
                 text.inputEl.focus();
             }
         });
+
+        new Setting(contentEl).setName(lang === 'ru' ? 'Описание' : 'Description')
+            .setDesc(lang === 'ru' ? 'Для задачи чеклиста описание хранится в отдельной заметке рядом с ним.' : 'For checklist tasks, the description is stored in a sibling note.')
+            .addTextArea(text => {
+                text.setValue(this.data.description || '').onChange(value => this.data.description = value);
+                text.inputEl.rows = 6;
+                text.inputEl.style.minWidth = '320px';
+            });
 
         const habits = this.plugin.settings.properties.filter(p => p.type === 'timer' || !p.type).map(p => p.name);
         new Setting(contentEl).setName(t(lang, 'assoc_habit_label') || "Associated Habit").addDropdown(cb => {

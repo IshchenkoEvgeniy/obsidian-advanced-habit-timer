@@ -12,9 +12,10 @@ export interface NativeChecklistNode {
 /** Parent-first order is required because GitHub creates a sub-issue under an existing Issue. */
 export function nativeChecklistNodes(tasks: ProjectTask[]): NativeChecklistNode[] {
     const nodes = new Map<string, NativeChecklistNode>();
+    const taskIds = new Set(tasks.map(task => task.id));
     for (const task of tasks) {
         if (!task.section?.startsWith('Этап ')) continue;
-        const stageKey = `stage:${task.section}`;
+        const stageKey = task.sectionKey || `stage:${task.section}`;
         if (!nodes.has(stageKey)) nodes.set(stageKey, {
             key: stageKey, title: task.section, stage: task.section, kind: 'stage'
         });
@@ -28,7 +29,7 @@ export function nativeChecklistNodes(tasks: ProjectTask[]): NativeChecklistNode[
         }
         const key = `leaf:${task.id}`;
         nodes.set(key, { key, title: task.name, stage: task.section,
-            parentKey: task.parentId && tasks.some(candidate => candidate.id === task.parentId) ? `leaf:${task.parentId}` : parentKey,
+            parentKey: task.parentId && taskIds.has(task.parentId) ? `leaf:${task.parentId}` : parentKey,
             kind: 'leaf', task });
     }
     return [...nodes.values()];

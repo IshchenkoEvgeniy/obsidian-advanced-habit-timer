@@ -78,7 +78,7 @@
         }
         const initial = projectTaskToData(task, seconds => plugin.formatTime(seconds));
         new TaskEditorModal(plugin.app, plugin, initial, ctx.columns, true, async data => {
-            await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+            await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
             ctx.onRefresh();
         }).open();
     }
@@ -98,7 +98,7 @@
             endDate = dateKey(nextEnd);
         }
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { startDate: key, endDate });
-        await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+        await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId, task.sourceLine);
         ctx.onRefresh();
     }
     function taskColor(task: ProjectTask): string {

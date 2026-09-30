@@ -85,7 +85,7 @@ import { isDone } from '../../utils/status';
     function editTask(task: ProjectTask): void {
         const initial = projectTaskToData(task, seconds => plugin.formatTime(seconds));
         new TaskEditorModal(app, plugin, initial, columns, true, async data => {
-            await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+            await view.dataEngine.saveEditedTask(scope, task, data, columns);
             ctx.onRefresh();
         }).open();
     }
@@ -101,7 +101,7 @@ import { isDone } from '../../utils/status';
     async function setStatus(task: ProjectTask, status: string): Promise<void> {
         if (task.status === status) return;
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { status });
-        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId, task.sourceLine);
         ctx.onRefresh();
     }
 
@@ -159,7 +159,7 @@ import { isDone } from '../../utils/status';
     /** Quick deadline action Р Р†Р вЂљРІР‚Сњ writes startDate/endDate through the regular saveTask path. */
     async function setDeadline(task: ProjectTask, endDate: string): Promise<void> {
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { endDate });
-        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId, task.sourceLine);
         ctx.onRefresh();
     }
 
@@ -167,7 +167,7 @@ import { isDone } from '../../utils/status';
     async function setPriority(task: ProjectTask, priority?: string): Promise<void> {
         if ((task.priority || undefined) === priority) return;
         const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { priority });
-        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+        await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId, task.sourceLine);
         ctx.onRefresh();
     }
 
@@ -249,7 +249,7 @@ import { isDone } from '../../utils/status';
 
         for (const [order, task] of siblings.entries()) {
             const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { status: task.status, order });
-            await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId);
+            await view.dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, columns, task.blockId, task.sourceLine);
         }
         ctx.onRefresh();
     }

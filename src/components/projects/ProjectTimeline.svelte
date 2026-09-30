@@ -60,7 +60,7 @@
     function editTask(task: ProjectTask): void {
         const initial = projectTaskToData(task, seconds => plugin.formatTime(seconds));
         new TaskEditorModal(plugin.app, plugin, initial, ctx.columns, true, async data => {
-            await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+            await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
             ctx.onRefresh();
         }).open();
     }

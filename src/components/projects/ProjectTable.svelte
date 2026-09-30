@@ -52,6 +52,7 @@
     let collapsedTasks = new Set<string>();
     let hiddenTaskIds = new Set<string>();
     let initializedChecklistScope = '';
+    let restoredCollapseForScope = false;
     let addingChild: { kind: 'stage'; stage: string; task: ProjectTask }
         | { kind: 'group'; parent: { id: string; title: string; sourceLine: number }; task: ProjectTask }
         | { kind: 'task'; task: ProjectTask } | null = null;
@@ -106,7 +107,7 @@
         sortRules = [];
     }
     $: if (hasChecklistHierarchy && initializedChecklistScope !== scope.id) {
-        collapsedParents = defaultCollapsedParents();
+        if (!restoredCollapseForScope) collapsedParents = defaultCollapsedParents();
         initializedChecklistScope = scope.id;
     }
     $: shownFields = fieldOrder.filter(field => visible.has(field) && (field !== 'section' || hasSections));
@@ -126,6 +127,7 @@
         JSON.stringify(sortRules) !== JSON.stringify(activeSavedConfig.sortRules) ||
         showEstimateSum !== activeSavedConfig.showEstimateSum || showSpentSum !== activeSavedConfig.showSpentSum;
     $: if (scope.id !== loadedScopeId) loadPreferences(scope.id);
+    $: if (scope.id === loadedScopeId) saveCollapsePreferences(collapsed, collapsedParents, collapsedTasks);
 
     function prefKey(id: string): string { return `habit-timer:project-table:${id}`; }
     function defaultCollapsedParents(): Set<string> {
@@ -149,15 +151,13 @@
         sortRules = (config.sortRules || []).filter(rule => [...fieldKeys, 'title'].includes(rule.field) && [1, -1].includes(rule.direction));
         showEstimateSum = config.showEstimateSum !== false;
         showSpentSum = config.showSpentSum === true;
-        collapsed = new Set();
-        collapsedParents = defaultCollapsedParents();
-        collapsedTasks = new Set();
         selectedCells = new Set();
     }
 
     function loadPreferences(id: string): void {
         loadedScopeId = id;
         initializedChecklistScope = '';
+        restoredCollapseForScope = false;
         query = '';
         visible = scope.githubProjectUrl
             ? new Set<Field>(['assignees', 'status', 'linkedPrs', 'subIssues'])
@@ -190,6 +190,12 @@
             if (typeof saved.sliceValue === 'string') sliceValue = saved.sliceValue;
             if (Array.isArray(saved.sortRules)) sortRules = saved.sortRules.filter((rule: SortRule) =>
                 [...fieldKeys, 'title'].includes(rule.field) && [1, -1].includes(rule.direction));
+            if (Array.isArray(saved.collapsedGroups) && Array.isArray(saved.collapsedParents) && Array.isArray(saved.collapsedTasks)) {
+                collapsed = new Set(saved.collapsedGroups.filter((key: unknown): key is string => typeof key === 'string'));
+                collapsedParents = new Set(saved.collapsedParents.filter((key: unknown): key is string => typeof key === 'string'));
+                collapsedTasks = new Set(saved.collapsedTasks.filter((key: unknown): key is string => typeof key === 'string'));
+                restoredCollapseForScope = true;
+            }
             showEstimateSum = saved.showEstimateSum !== false;
             showSpentSum = saved.showSpentSum === true;
             if (Array.isArray(saved.savedViews)) {
@@ -220,8 +226,19 @@
         try {
             localStorage.setItem(prefKey(scope.id), JSON.stringify({
                 query, visible: [...visible], fieldOrder, hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-                sortRules, showEstimateSum, showSpentSum, savedViews, activeViewId
+                sortRules, showEstimateSum, showSpentSum, savedViews, activeViewId,
+                collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks]
             }));
+        } catch { /* Storage may be disabled; the current view still works. */ }
+    }
+
+    function saveCollapsePreferences(groups: Set<string>, parents: Set<string>, tasks: Set<string>): void {
+        try {
+            const key = prefKey(scope.id);
+            const parsed = JSON.parse(localStorage.getItem(key) || '{}');
+            const saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+            localStorage.setItem(key, JSON.stringify({ ...saved, collapsedGroups: [...groups],
+                collapsedParents: [...parents], collapsedTasks: [...tasks] }));
         } catch { /* Storage may be disabled; the current view still works. */ }
     }
 
@@ -272,8 +289,9 @@
     }
 
     function fieldLabel(field: Field | 'title'): string { return words[field]; }
+    function stageKey(group: RowGroup): string { return group.rows[0]?.sectionKey || `stage:${group.label}`; }
     function value(task: ProjectTask, field: Field | 'title'): string {
-        const meta = scope.githubBindings?.[task.id]?.meta;
+        const meta = scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta;
         switch (field) {
             case 'title': return task.name;
             case 'assignees': return meta?.assignees?.join(', ') || '';
@@ -294,12 +312,12 @@
     }
 
     function customValue(task: ProjectTask, name: string): string {
-        const binding = scope.githubBindings?.[task.id];
+        const binding = scope.githubNativeItems?.[`leaf:${task.id}`] || scope.githubBindings?.[task.id];
         return String(binding?.localFields?.[name] ?? binding?.meta?.fields[name] ?? '');
     }
 
     async function saveCustomField(task: ProjectTask, name: string, raw: string): Promise<void> {
-        const binding = scope.githubBindings?.[task.id];
+        const binding = scope.githubNativeItems?.[`leaf:${task.id}`] || scope.githubBindings?.[task.id];
         if (!binding) { new Notice(lang === 'ru' ? 'Сначала синхронизируйте задачу с GitHub.' : 'Sync this item with GitHub first.'); return; }
         binding.localFields ||= { ...(binding.meta?.fields || {}) };
         binding.localFields[name] = raw;
@@ -531,7 +549,7 @@
                 if (!property) continue;
                 previous.push({ taskId: task.id, field, oldValue: value(task, field) });
                 const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { [property]: raw });
-                await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+                await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId, task.sourceLine);
             }
             if (recordUndo) lastBulk = previous;
             ctx.onRefresh();
@@ -567,7 +585,7 @@
                 const property = map[change.field];
                 if (!property) continue;
                 const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { [property]: change.oldValue });
-                await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+                await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId, task.sourceLine);
             }
             ctx.onRefresh();
         } catch (error) { new Notice(String(error)); }
@@ -603,7 +621,7 @@
         busy = true;
         try {
             const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), changes);
-            await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+            await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId, task.sourceLine);
             ctx.onRefresh();
         } catch (error) {
             new Notice(String(error));
@@ -643,12 +661,26 @@
     }
 
     function openTask(task: ProjectTask): void {
+        if (task.notePath) {
+            void app.workspace.openLinkText(task.notePath, '', false);
+            return;
+        }
         if (scope.sourceType === 'file' && task.sourceLine !== undefined) {
             void openChecklistParent(task, task.sourceLine);
             return;
         }
         const link = task.blockId ? `${task.file.path}#^${task.blockId}` : task.file.path;
         void app.workspace.openLinkText(link, '', false);
+    }
+
+    function openTaskIndex(): void {
+        if (scope.sourceType !== 'file') return;
+        const path = scope.sourceValue.replace(/\.md$/i, '.tasks.md');
+        if (!app.vault.getAbstractFileByPath(path)) {
+            new Notice(lang === 'ru' ? 'Список задач ещё не создан' : 'Task index has not been created yet');
+            return;
+        }
+        void app.workspace.openLinkText(path, '', false);
     }
 
     async function openChecklistParent(task: ProjectTask, line: number): Promise<void> {
@@ -663,7 +695,7 @@
     function editTask(task: ProjectTask): void {
         new TaskEditorModal(app, plugin, projectTaskToData(task, seconds => plugin.formatTime(seconds)),
             ctx.columns, true, async data => {
-                await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId);
+                await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
                 ctx.onRefresh();
             }).open();
     }
@@ -776,6 +808,9 @@
             </div>
         {/if}
         <div class="toolbar-actions">
+            {#if scope.sourceType === 'file'}
+                <button on:click={openTaskIndex} title={lang === 'ru' ? 'Открыть список с датами выполнения и ссылками на заметки' : 'Open task list with completion times and note links'}><span use:icon={'file-text'}></span>{lang === 'ru' ? 'Список задач' : 'Task list'}</button>
+            {/if}
             <button class:active={showArchive} on:click={() => showArchive = !showArchive}><span use:icon={'archive'}></span>{lang === 'ru' ? 'Архив' : 'Archive'} ({ctx.archivedTasks?.length || 0})</button>
             <button class:active={viewMenuOpen} on:click={() => { viewMenuOpen = !viewMenuOpen; fieldMenuOpen = false; }}>
                 <span use:icon={'sliders-horizontal'}></span>{words.view}<span use:icon={'chevron-down'}></span>
@@ -887,8 +922,8 @@
                                         aria-expanded={!collapsed.has(group.key)} on:click={() => toggleGroup(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
                                     <span class="stage-icon" use:icon={hierarchy.stageProgress.get(group.key)?.done === hierarchy.stageProgress.get(group.key)?.total ? 'circle-check' : 'circle-dot'}></span>
                                     <button class="stage-title" on:click={() => toggleGroup(group.key)}>{group.label}</button>
-                                    {#if scope.githubNativeItems?.[`stage:${group.label}`]?.url}
-                                        <a class="github-item-link" href={scope.githubNativeItems[`stage:${group.label}`]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
+                                    {#if scope.githubNativeItems?.[stageKey(group)]?.url}
+                                        <a class="github-item-link" href={scope.githubNativeItems[stageKey(group)]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
                                     {/if}
                                     {#if group.rows[0]}
                                         <button class="add-subissue" title={lang === 'ru' ? 'Добавить задачу в этап' : 'Add issue to stage'}
@@ -900,7 +935,7 @@
                                             {#if actionMenu === `stage:${group.key}`}<div class="row-action-menu" role="menu">
                                                 <button role="menuitem" on:click={() => { toggleGroup(group.key); actionMenu = ''; }}>{collapsed.has(group.key) ? (lang === 'ru' ? 'Развернуть' : 'Expand') : (lang === 'ru' ? 'Свернуть' : 'Collapse')}</button>
                                                 <button role="menuitem" on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== group.key)); addingChild = { kind: 'stage', stage: group.key, task: group.rows[0]! }; childName = ''; actionMenu = ''; }}>{lang === 'ru' ? 'Добавить задачу' : 'Add issue'}</button>
-                                                {#if scope.githubNativeItems?.[`stage:${group.label}`]?.url}<a role="menuitem" href={scope.githubNativeItems[`stage:${group.label}`]!.url} target="_blank" rel="noopener noreferrer" on:click={() => actionMenu = ''}>{lang === 'ru' ? 'Открыть в GitHub' : 'Open on GitHub'}</a>{/if}
+                                                {#if scope.githubNativeItems?.[stageKey(group)]?.url}<a role="menuitem" href={scope.githubNativeItems[stageKey(group)]!.url} target="_blank" rel="noopener noreferrer" on:click={() => actionMenu = ''}>{lang === 'ru' ? 'Открыть в GitHub' : 'Open on GitHub'}</a>{/if}
                                             </div>{/if}
                                         </span>
                                     {/if}
@@ -1052,8 +1087,8 @@
                                             {:else if field === 'subIssues'}
                                                 {#if hierarchy.taskChildren.get(task.id)?.length}
                                                     <SubIssuesProgress done={hierarchy.taskChildren.get(task.id)!.filter(child => child.status === ctx.columns[ctx.columns.length - 1]).length} total={hierarchy.taskChildren.get(task.id)!.length} label={words.subIssues} />
-                                                {:else if scope.githubBindings?.[task.id]?.meta?.subIssues?.total}
-                                                    <SubIssuesProgress done={scope.githubBindings[task.id]!.meta!.subIssues!.completed} total={scope.githubBindings[task.id]!.meta!.subIssues!.total} label={words.subIssues} />
+                                                {:else if scope.githubNativeItems?.[`leaf:${task.id}`]?.meta?.subIssues?.total || scope.githubBindings?.[task.id]?.meta?.subIssues?.total}
+                                                    <SubIssuesProgress done={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.completed} total={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.total} label={words.subIssues} />
                                                 {:else}<span class="plain-value" title={value(task, field)}>{value(task, field) || '—'}</span>{/if}
                                             {:else if field === 'section'}
                                                 <span class="plain-value" title={task.section || ''}>{task.section || '—'}</span>

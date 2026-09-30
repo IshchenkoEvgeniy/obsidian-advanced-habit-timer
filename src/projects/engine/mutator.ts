@@ -94,12 +94,13 @@ export class ProjectMutator {
         await this.app.vault.modify(file, lines.join('\n'));
     }
 
-    async saveTask(taskFile: TFile, data: TaskData, isSingleFileTask?: boolean, oldTaskName?: string, columns?: string[], blockId?: string): Promise<void> {
+    async saveTask(taskFile: TFile, data: TaskData, isSingleFileTask?: boolean, oldTaskName?: string, columns?: string[], blockId?: string, sourceLine?: number): Promise<void> {
         if (isSingleFileTask && oldTaskName) {
             const content = await this.app.vault.read(taskFile);
             let lines = content.split('\n');
             
-            const { lineIdx: taskLineIdx, indent: _indent, checked: taskChecked } = this.parser.findTaskLineIndex(lines, oldTaskName, blockId);
+            const { lineIdx: taskLineIdx, indent: _indent, checked: taskChecked } = this.parser.findTaskLineIndex(lines, oldTaskName, blockId, sourceLine);
+            if (taskLineIdx < 0) throw new Error(`Checklist task moved or was deleted: ${oldTaskName}`);
             let taskIndent = " ".repeat(_indent);
 
             if (taskLineIdx !== -1) {

@@ -42,8 +42,17 @@ export class ProjectParser {
     /**
      * Finds the line index of a task in single-file mode using an exact match.
      */
-    findTaskLineIndex(lines: string[], taskName: string, blockId?: string): { lineIdx: number; indent: number; checked: boolean } {
+    findTaskLineIndex(lines: string[], taskName: string, blockId?: string, expectedLine?: number): { lineIdx: number; indent: number; checked: boolean } {
         const checkboxRe = /^([ \t]*)-[ \t]+\[([ xX])\][ \t]*(.*)/;
+        if (expectedLine !== undefined) {
+            const line = lines[expectedLine];
+            const match = line?.match(checkboxRe);
+            if (match && (!blockId || blockIdFromTaskLine(line!) === blockId) &&
+                taskDisplayTitle(match[3] || '') === taskName) {
+                return { lineIdx: expectedLine, indent: (match[1] || '').length, checked: match[2] !== ' ' };
+            }
+        }
+        let found: { lineIdx: number; indent: number; checked: boolean } | undefined;
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             if (!line) continue;
@@ -53,14 +62,15 @@ export class ProjectParser {
             const rawText = m[3] || '';
             const cleanName = taskDisplayTitle(rawText);
             if (blockId || cleanName === taskName) {
-                return {
+                if (found) throw new Error(`More than one checklist task matches “${taskName}”. Refresh the project and use its exact row.`);
+                found = {
                     lineIdx: i,
                     indent: (m[1] || '').length,
                     checked: (m[2] || ' ') !== ' '
                 };
             }
         }
-        return { lineIdx: -1, indent: 0, checked: false };
+        return found || { lineIdx: -1, indent: 0, checked: false };
     }
 
     async loadTasks(scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
@@ -131,7 +141,7 @@ export class ProjectParser {
     }
 
     private async parseSeparateFiles(files: TFile[], columns: string[], scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
-        return Promise.all(files.map(async file => {
+        const parsed = await Promise.all(files.map(async file => {
             const mtime = file.stat.mtime;
             const cacheKey = `${scope.id}\u0000${file.path}`;
             const cached = this.cache.get(cacheKey);
@@ -143,6 +153,8 @@ export class ProjectParser {
             const fm = getObject(fileCache?.frontmatter);
             
             const content = await this.app.vault.cachedRead(file);
+            if (fm['project_task_id'] || fm['project_task_index'] ||
+                /^---\r?\n(?:(?!---\r?\n)[\s\S])*?(?:project_task_id|project_task_index):/m.test(content)) return null;
             const lines = content.split('\n');
             const subtasks: ProjectSubtask[] = [];
             for (let i = 0; i < lines.length; i++) {
@@ -202,12 +214,14 @@ export class ProjectParser {
                     : undefined,
                 order: getNumber(fm['order'], 0),
                 images,
-                subtasks
+                subtasks,
+                description: content.match(/<!-- project-description:start -->\r?\n([\s\S]*?)\r?\n<!-- project-description:end -->/)?.[1]?.trim()
             };
 
             this.cache.set(cacheKey, { mtime, tasks: [task] });
             return task;
         }));
+        return parsed.filter((task): task is ProjectTask => task !== null);
     }
 
     private async parseSingleFile(file: TFile, columns: string[], scope: ProjectScopeDefinition): Promise<ProjectTask[]> {

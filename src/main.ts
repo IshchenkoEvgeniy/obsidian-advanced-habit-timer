@@ -42,6 +42,7 @@ export default class HabitTimerPlugin extends Plugin {
     stateManager: StateManager;
     /** Shared engine instance — preserves file-level cache across calls. */
     projectEngine: ProjectDataEngine;
+    projectSourceRename: Promise<void> = Promise.resolve();
     timerSessions: TimerSessionService;
     dashboardApiBridge: DashboardApiBridge;
     private currentThemeClass: string = '';
@@ -62,6 +63,37 @@ export default class HabitTimerPlugin extends Plugin {
         this.companion = new CloudflareCompanionService(this);
         this.stateManager = new StateManager(this.app, this);
         this.projectEngine = new ProjectDataEngine(this.app, this);
+        this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+            let changed = false;
+            let renamedChecklist = false;
+            for (const scope of this.settings.projectScopes || []) {
+                if (scope.sourceType === 'file' && scope.sourceValue === oldPath) {
+                    scope.sourceValue = file.path;
+                    changed = true;
+                    renamedChecklist = true;
+                    continue;
+                }
+                if (!scope.githubBindings) continue;
+                for (const [taskId, binding] of Object.entries(scope.githubBindings)) {
+                    const prefix = ['virtual', 'block', 'file', 'line'].find(kind =>
+                        taskId.startsWith(`${kind}:${oldPath}${kind === 'file' ? '' : ':'}`));
+                    if (!prefix) continue;
+                    const newId = taskId.replace(`${prefix}:${oldPath}`, `${prefix}:${file.path}`);
+                    delete scope.githubBindings[taskId];
+                    scope.githubBindings[newId] = binding;
+                    changed = true;
+                }
+            }
+            if (!changed) return;
+            const previous = this.projectSourceRename;
+            this.projectSourceRename = previous.catch(() => undefined).then(async () => {
+                try {
+                    if (renamedChecklist && file instanceof TFile) await this.projectEngine.renameChecklistSource(oldPath, file);
+                } catch (error) {
+                    new Notice(`Could not move project task state: ${String(error)}`, 10000);
+                } finally { await this.saveSettings(); }
+            });
+        }));
         this.timerSessions = new TimerSessionService(this);
         this.dashboardApiBridge = new DashboardApiBridge(this);
 
