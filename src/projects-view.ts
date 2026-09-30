@@ -106,6 +106,10 @@ export class ProjectsView extends ItemView {
         }, delay);
     }
 
+    refreshSettings(): void {
+        this.scheduleReload(0);
+    }
+
     private isProjectFile(path: string): boolean {
         return (this.plugin.settings.projectScopes || []).some(scope => {
             if (scope.sourceType === 'file') {
@@ -1088,6 +1092,16 @@ export class ProjectsView extends ItemView {
                         oldBinding.meta = meta;
                         bindingsUpdated = true;
                     }
+                }
+            }
+            // Stage/group Issues also carry grouping fields (Milestone, Iteration,
+            // custom single-select fields), even though they have no checkbox row.
+            if (!node.task) {
+                const nativeBinding = scope.githubNativeItems[node.key]!;
+                const meta = { fields: { ...item.fields }, assignees: item.assignees, subIssues: item.subIssues };
+                if (JSON.stringify(nativeBinding.meta) !== JSON.stringify(meta)) {
+                    nativeBinding.meta = meta;
+                    bindingsUpdated = true;
                 }
             }
             processed++;

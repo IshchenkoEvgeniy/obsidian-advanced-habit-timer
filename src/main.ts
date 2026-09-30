@@ -4,6 +4,7 @@ import { LibraryView, VIEW_TYPE_LIBRARY } from './library-view';
 import { ProjectsView, VIEW_TYPE_PROJECTS } from './projects-view';
 import { formatDuration } from './utils';
 import { ProjectDataEngine } from './projects/project-data';
+import { projectScopeCacheSignature } from './projects/engine/cache';
 import { DEFAULT_SETTINGS } from './types';
 import { defaultDailyGoal, defaultDailyGoalUnit } from './library/daily-goals';
 import type { HabitTimerSettings } from './types';
@@ -48,10 +49,12 @@ export default class HabitTimerPlugin extends Plugin {
     private currentThemeClass: string = '';
     /** Pending deferred-startup timeout (heavy/network activity after layout settle). */
     private deferredStartupTimer: number | null = null;
+    private projectSettingsSignature = '';
 
 
     async onload() {
         await this.loadSettings();
+        this.projectSettingsSignature = this.currentProjectSettingsSignature();
         this.applyTheme(this.settings.theme);
 
         // Все сервисы создаются синхронно: вьюхи, настройки и команды могут
@@ -338,7 +341,19 @@ export default class HabitTimerPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        const projectSignature = this.currentProjectSettingsSignature();
+        if (projectSignature !== this.projectSettingsSignature) {
+            this.projectSettingsSignature = projectSignature;
+            for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PROJECTS)) {
+                if (leaf.view instanceof ProjectsView) leaf.view.refreshSettings();
+            }
+        }
         this.dashboardApiBridge?.emitChanged(['timer', 'habits', 'projects', 'library', 'stats', 'settings']);
+    }
+
+    private currentProjectSettingsSignature(): string {
+        return JSON.stringify((this.settings.projectScopes || []).map(scope =>
+            [scope.id, scope.name, projectScopeCacheSignature(scope)]));
     }
 
     applyTheme(theme: string) {

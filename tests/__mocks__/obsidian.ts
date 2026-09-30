@@ -39,6 +39,8 @@ export class Notice { constructor(_msg: string) {} }
 export class Setting { constructor(_el: HTMLElement) {} }
 export class SuggestModal { constructor(_app: App) {} }
 export class ItemView {}
+export class MarkdownView extends ItemView {}
+export function setIcon(_element: HTMLElement, _icon: string): void {}
 export class MarkdownRenderer {}
 export class ButtonComponent {}
 export class Platform {}

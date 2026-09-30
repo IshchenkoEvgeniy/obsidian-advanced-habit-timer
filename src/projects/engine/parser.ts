@@ -1,7 +1,7 @@
 import { App, TFile, Notice } from 'obsidian';
 import { projectTaskId, type ProjectScopeDefinition, type ProjectTask, type ProjectSubtask } from '../types';
 import { parseDuration, getObject, getString, getStringOpt, getNumber } from '../../utils';
-import type { ProjectCache } from './cache';
+import { projectScopeCacheSignature, type ProjectCache } from './cache';
 import { blockIdFromTaskLine, taskDisplayTitle, virtualTaskId } from './task-identity';
 import { getCommunityPlugin, getDataviewApi } from '../community-plugins';
 
@@ -141,11 +141,12 @@ export class ProjectParser {
     }
 
     private async parseSeparateFiles(files: TFile[], columns: string[], scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
+        const signature = projectScopeCacheSignature(scope);
         const parsed = await Promise.all(files.map(async file => {
             const mtime = file.stat.mtime;
             const cacheKey = `${scope.id}\u0000${file.path}`;
             const cached = this.cache.get(cacheKey);
-            if (cached && cached.mtime === mtime && cached.tasks.length > 0) {
+            if (cached && cached.mtime === mtime && cached.signature === signature && cached.tasks.length > 0) {
                 return cached.tasks[0]!;
             }
 
@@ -218,17 +219,18 @@ export class ProjectParser {
                 description: content.match(/<!-- project-description:start -->\r?\n([\s\S]*?)\r?\n<!-- project-description:end -->/)?.[1]?.trim()
             };
 
-            this.cache.set(cacheKey, { mtime, tasks: [task] });
+            this.cache.set(cacheKey, { mtime, signature, tasks: [task] });
             return task;
         }));
         return parsed.filter((task): task is ProjectTask => task !== null);
     }
 
     private async parseSingleFile(file: TFile, columns: string[], scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
+        const signature = projectScopeCacheSignature(scope);
         const mtime = file.stat.mtime;
         const cacheKey = `${scope.id}\u0000${file.path}`;
         const cached = this.cache.get(cacheKey);
-        if (cached && cached.mtime === mtime) {
+        if (cached && cached.mtime === mtime && cached.signature === signature) {
             return cached.tasks;
         }
 
@@ -397,7 +399,7 @@ export class ProjectParser {
             }
         }
 
-        this.cache.set(cacheKey, { mtime: file.stat.mtime, tasks });
+        this.cache.set(cacheKey, { mtime: file.stat.mtime, signature, tasks });
         return tasks;
     }
 }

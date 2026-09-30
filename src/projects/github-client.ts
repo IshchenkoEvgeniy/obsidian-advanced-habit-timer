@@ -160,6 +160,7 @@ export class GitHubProjectsClient {
                         value.pullRequests?.nodes.filter(Boolean).map(pr => `#${pr.number}`).join(', ');
                     if (raw !== undefined && raw !== null) fields[value.field.name] = raw;
                 }
+                if (node.content.milestone) fields.Milestone = node.content.milestone.title;
                 items.push({
                     id: node.id, contentId: node.content.id, contentType: node.content.__typename,
                     title: node.content.title, body: node.content.body || '', url: node.content.url,

@@ -12,6 +12,8 @@
     import { currentTab } from '../../store/ProjectsStore';
     import SubIssuesProgress from './SubIssuesProgress.svelte';
     import { buildTableHierarchy } from './table-hierarchy';
+    import { collectTableStages, groupTableStages, tableStageKey, type TableRowGroup, type StageGrouping } from './table-stage-groups';
+    import { fieldKeys, hasCurrentTableViewConfig, normalizeTableViewConfig, type Field, type GroupField, type SortRule, type ViewConfig, type SavedView } from './table-view-config';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -19,13 +21,7 @@
     export let scope: ProjectScopeDefinition;
     export let ctx: ViewContext;
 
-    type Field = 'assignees' | 'status' | 'linkedPrs' | 'subIssues' | 'iteration' | 'priority' | 'section' | 'tags' | 'habit' | 'start' | 'due' | 'estimate' | 'spent';
-    type GroupField = 'none' | 'section' | 'status' | 'priority' | 'habit';
-    type SortRule = { field: Field | 'title'; direction: 1 | -1 };
-    type RowGroup = { key: string; label: string; rows: ProjectTask[]; estimate: number; spent: number };
-    type ViewConfig = { query: string; visible: Field[]; fieldOrder: Field[]; hiddenGitHub?: string[]; groupBy: GroupField; sliceBy: GroupField; sliceValue: string; sortRules: SortRule[]; showEstimateSum: boolean; showSpentSum: boolean };
-    type SavedView = { id: string; name: string; config: ViewConfig };
-    const fieldKeys: Field[] = ['assignees', 'status', 'linkedPrs', 'subIssues', 'iteration', 'estimate', 'start', 'due', 'priority', 'section', 'tags', 'habit', 'spent'];
+    type RowGroup = TableRowGroup;
     const editableFields: Field[] = ['status', 'priority', 'tags', 'habit', 'start', 'due', 'estimate'];
     const editableGitHubTypes = ['TEXT', 'NUMBER', 'DATE', 'SINGLE_SELECT', 'MULTI_SELECT', 'ITERATION'];
     const taskCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -76,6 +72,10 @@
     let newViewName = '';
     let renameViewName = '';
     let showArchive = false;
+    let stageGrouping: StageGrouping = 'none';
+    let collapsedStageGroups = new Set<string>();
+    let stageGroupEditorOpen = false;
+    let stageGroupDrafts: Record<string, string> = {};
 
     $: lang = plugin.settings.language;
     $: words = lang === 'ru' ? {
@@ -99,6 +99,9 @@
         hide: 'Hide field', empty: 'No items match this filter', ascending: 'Ascending',
         descending: 'Descending', noSort: 'No sorting', selected: 'selected'
     };
+    // Preference loading assigns state inside a function. Run it before projections:
+    // legacy Svelte cannot infer those assignments when ordering reactive statements.
+    $: if (scope.id !== loadedScopeId) loadPreferences(scope.id);
     $: hasSections = ctx.allTasks.some(task => Boolean(task.section));
     $: hasChecklistHierarchy = ctx.allTasks.some(task => Boolean(task.checklistAncestors?.length) &&
         (scope.sourceType !== 'file' || task.file.path === scope.sourceValue));
@@ -114,7 +117,13 @@
     $: customFields = (scope.githubFields || []).filter(field => field.name !== 'Status' &&
         editableGitHubTypes.includes(field.type) && !hiddenGitHub.has(field.id));
     $: hierarchy = buildTableHierarchy(ctx.allTasks, ctx.columns[ctx.columns.length - 1] || 'Done');
-    $: groups = makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words);
+    $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words),
+        scope, groupBy === 'section' ? stageGrouping : 'none', hierarchy.stageProgress,
+        lang === 'ru' ? 'Без группы этапов' : 'Ungrouped stages');
+    $: allStages = collectTableStages(ctx.allTasks);
+    $: stageGroupNames = [...new Set(Object.values(stageGroupDrafts).map(name => name.trim()).filter(Boolean))];
+    $: stageGroupingFields = (scope.githubFields || []).filter(field => field.name !== 'Status' && field.name !== 'Этап' &&
+        ['SINGLE_SELECT', 'ITERATION', 'MILESTONE', 'TEXT'].includes(field.type));
     $: hiddenTaskIds = getHiddenTaskIds(ctx.allTasks, hierarchy.taskById, collapsedParents, collapsedTasks);
     $: totalVisible = groups.reduce((sum, group) => sum + group.rows.length, 0);
     $: sliceOptions = makeSliceOptions(ctx.allTasks, query, sliceBy, words);
@@ -125,9 +134,9 @@
         JSON.stringify([...hiddenGitHub]) !== JSON.stringify(activeSavedConfig.hiddenGitHub || []) ||
         groupBy !== activeSavedConfig.groupBy || sliceBy !== activeSavedConfig.sliceBy || sliceValue !== activeSavedConfig.sliceValue ||
         JSON.stringify(sortRules) !== JSON.stringify(activeSavedConfig.sortRules) ||
-        showEstimateSum !== activeSavedConfig.showEstimateSum || showSpentSum !== activeSavedConfig.showSpentSum;
-    $: if (scope.id !== loadedScopeId) loadPreferences(scope.id);
-    $: if (scope.id === loadedScopeId) saveCollapsePreferences(collapsed, collapsedParents, collapsedTasks);
+        showEstimateSum !== activeSavedConfig.showEstimateSum || showSpentSum !== activeSavedConfig.showSpentSum ||
+        stageGrouping !== (activeSavedConfig.stageGrouping || 'none');
+    $: if (scope.id === loadedScopeId) saveCollapsePreferences(collapsed, collapsedParents, collapsedTasks, collapsedStageGroups);
 
     function prefKey(id: string): string { return `habit-timer:project-table:${id}`; }
     function defaultCollapsedParents(): Set<string> {
@@ -136,7 +145,7 @@
 
     function captureConfig(): ViewConfig {
         return { query, visible: [...visible], fieldOrder: [...fieldOrder], hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum };
+            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum, stageGrouping };
     }
 
     function applyConfig(config: ViewConfig): void {
@@ -151,6 +160,7 @@
         sortRules = (config.sortRules || []).filter(rule => [...fieldKeys, 'title'].includes(rule.field) && [1, -1].includes(rule.direction));
         showEstimateSum = config.showEstimateSum !== false;
         showSpentSum = config.showSpentSum === true;
+        stageGrouping = config.stageGrouping || 'none';
         selectedCells = new Set();
     }
 
@@ -162,6 +172,7 @@
         visible = scope.githubProjectUrl
             ? new Set<Field>(['assignees', 'status', 'linkedPrs', 'subIssues'])
             : new Set<Field>(['status', 'priority', 'section', 'tags', 'due', 'estimate']);
+        if (!scope.githubProjectUrl && ctx.allTasks.some(task => task.checklistAncestors?.length || task.parentId || task.subtasks?.length)) visible.add('subIssues');
         hiddenGitHub = new Set();
         fieldOrder = [...fieldKeys];
         groupBy = ctx.allTasks.some(task => task.section) ? 'section' : 'status';
@@ -173,37 +184,30 @@
         collapsed = new Set();
         collapsedParents = defaultCollapsedParents();
         collapsedTasks = new Set();
+        collapsedStageGroups = new Set();
+        stageGrouping = 'none';
+        stageGroupEditorOpen = false;
         savedViews = [];
         activeViewId = 'all';
         try {
             const saved = JSON.parse(localStorage.getItem(prefKey(id)) || 'null');
-            if (!saved || typeof saved !== 'object') return;
-            if (typeof saved.query === 'string') query = saved.query;
-            if (Array.isArray(saved.visible)) visible = new Set(saved.visible.filter((key: Field) => fieldKeys.includes(key)));
-            if (Array.isArray(saved.hiddenGitHub)) hiddenGitHub = new Set(saved.hiddenGitHub.filter((key: unknown): key is string => typeof key === 'string'));
-            if (Array.isArray(saved.fieldOrder)) {
-                fieldOrder = [...saved.fieldOrder.filter((key: Field) => fieldKeys.includes(key)), ...fieldKeys]
-                    .filter((key, index, array) => array.indexOf(key) === index);
-            }
-            if (['none', 'section', 'status', 'priority', 'habit'].includes(saved.groupBy)) groupBy = saved.groupBy;
-            if (['none', 'section', 'status', 'priority', 'habit'].includes(saved.sliceBy)) sliceBy = saved.sliceBy;
-            if (typeof saved.sliceValue === 'string') sliceValue = saved.sliceValue;
-            if (Array.isArray(saved.sortRules)) sortRules = saved.sortRules.filter((rule: SortRule) =>
-                [...fieldKeys, 'title'].includes(rule.field) && [1, -1].includes(rule.direction));
+            if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+            const fallback = captureConfig();
+            applyConfig(normalizeTableViewConfig(saved, fallback));
             if (Array.isArray(saved.collapsedGroups) && Array.isArray(saved.collapsedParents) && Array.isArray(saved.collapsedTasks)) {
                 collapsed = new Set(saved.collapsedGroups.filter((key: unknown): key is string => typeof key === 'string'));
                 collapsedParents = new Set(saved.collapsedParents.filter((key: unknown): key is string => typeof key === 'string'));
                 collapsedTasks = new Set(saved.collapsedTasks.filter((key: unknown): key is string => typeof key === 'string'));
                 restoredCollapseForScope = true;
             }
-            showEstimateSum = saved.showEstimateSum !== false;
-            showSpentSum = saved.showSpentSum === true;
+            if (Array.isArray(saved.collapsedStageGroups)) collapsedStageGroups = new Set(saved.collapsedStageGroups.filter((key: unknown): key is string => typeof key === 'string'));
             if (Array.isArray(saved.savedViews)) {
                 savedViews = saved.savedViews.filter((view: SavedView) =>
-                    typeof view?.id === 'string' && typeof view.name === 'string' && view.config && typeof view.config === 'object');
+                    typeof view?.id === 'string' && typeof view.name === 'string' && view.config && typeof view.config === 'object')
+                    .map((view: SavedView) => ({ ...view, config: normalizeTableViewConfig(view.config, fallback) }));
                 if (typeof saved.activeViewId === 'string' && savedViews.some(view => view.id === saved.activeViewId)) {
                     activeViewId = saved.activeViewId;
-                    applyConfig(savedViews.find(view => view.id === activeViewId)!.config);
+                    if (!hasCurrentTableViewConfig(saved)) applyConfig(savedViews.find(view => view.id === activeViewId)!.config);
                 }
             }
         } catch { /* Invalid local preference is ignored. */ }
@@ -226,19 +230,20 @@
         try {
             localStorage.setItem(prefKey(scope.id), JSON.stringify({
                 query, visible: [...visible], fieldOrder, hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-                sortRules, showEstimateSum, showSpentSum, savedViews, activeViewId,
-                collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks]
+                sortRules, showEstimateSum, showSpentSum, stageGrouping, savedViews, activeViewId,
+                collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks],
+                collapsedStageGroups: [...collapsedStageGroups]
             }));
         } catch { /* Storage may be disabled; the current view still works. */ }
     }
 
-    function saveCollapsePreferences(groups: Set<string>, parents: Set<string>, tasks: Set<string>): void {
+    function saveCollapsePreferences(groups: Set<string>, parents: Set<string>, tasks: Set<string>, stageGroups: Set<string>): void {
         try {
             const key = prefKey(scope.id);
             const parsed = JSON.parse(localStorage.getItem(key) || '{}');
             const saved = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
             localStorage.setItem(key, JSON.stringify({ ...saved, collapsedGroups: [...groups],
-                collapsedParents: [...parents], collapsedTasks: [...tasks] }));
+                collapsedParents: [...parents], collapsedTasks: [...tasks], collapsedStageGroups: [...stageGroups] }));
         } catch { /* Storage may be disabled; the current view still works. */ }
     }
 
@@ -289,7 +294,39 @@
     }
 
     function fieldLabel(field: Field | 'title'): string { return words[field]; }
-    function stageKey(group: RowGroup): string { return group.rows[0]?.sectionKey || `stage:${group.label}`; }
+    function stageKey(group: RowGroup): string { return tableStageKey(group); }
+
+    function openStageGroupEditor(): void {
+        stageGroupDrafts = { ...(scope.stageGroups || {}) };
+        stageGroupEditorOpen = true;
+        viewMenuOpen = false;
+    }
+
+    async function saveStageGroups(): Promise<void> {
+        if (busy) return;
+        busy = true;
+        const previous = scope.stageGroups;
+        try {
+            scope.stageGroups = Object.fromEntries(Object.entries(stageGroupDrafts)
+                .map(([key, name]) => [key, name.trim()]).filter(([, name]) => Boolean(name)));
+            await plugin.saveSettings();
+            scope = scope;
+            stageGrouping = 'local';
+            groupBy = 'section';
+            stageGroupEditorOpen = false;
+            savePreferences();
+            ctx.onRefresh();
+        } catch (error) {
+            scope.stageGroups = previous;
+            new Notice(String(error));
+        } finally { busy = false; }
+    }
+
+    function toggleStageGroup(key: string): void {
+        const next = new Set(collapsedStageGroups);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        collapsedStageGroups = next;
+    }
     function value(task: ProjectTask, field: Field | 'title'): string {
         const meta = scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta;
         switch (field) {
@@ -780,7 +817,7 @@
     }
 </script>
 
-<svelte:window on:keydown={(event) => { if (event.key === 'Escape' && viewMenuOpen) viewMenuOpen = false; }} />
+<svelte:window on:keydown={(event) => { if (event.key === 'Escape') { viewMenuOpen = false; stageGroupEditorOpen = false; } }} />
 
 <div class="project-table-shell">
     <nav class="saved-view-tabs" aria-label={lang === 'ru' ? 'Представления таблицы' : 'Table views'}>
@@ -810,6 +847,9 @@
             </div>
         {/if}
         <div class="toolbar-actions">
+            {#if hasSections}
+                <button class:active={stageGroupEditorOpen} on:click={openStageGroupEditor}><span use:icon={'folders'}></span>{lang === 'ru' ? 'Группы этапов' : 'Stage groups'}</button>
+            {/if}
             {#if scope.sourceType === 'file'}
                 <button on:click={openTaskIndex} title={lang === 'ru' ? 'Открыть список с датами выполнения и ссылками на заметки' : 'Open task list with completion times and note links'}><span use:icon={'file-text'}></span>{lang === 'ru' ? 'Список задач' : 'Task list'}</button>
             {/if}
@@ -834,6 +874,16 @@
                     <option value="status">{words.status}</option><option value="priority">{words.priority}</option><option value="habit">{words.habit}</option>
                 </select>
             </label>
+            {#if hasSections}
+                <label><span use:icon={'folders'}></span>{lang === 'ru' ? 'Над этапами' : 'Above stages'}
+                    <select bind:value={stageGrouping} aria-label={lang === 'ru' ? 'Группировать этапы' : 'Group stages'} on:change={() => { groupBy = 'section'; savePreferences(); }}>
+                        <option value="none">{words.none}</option>
+                        <option value="local">{lang === 'ru' ? 'Группа этапов' : 'Stage group'}</option>
+                        {#each stageGroupingFields as field (field.id)}<option value={`github:${field.name}`}>GitHub: {field.name}</option>{/each}
+                    </select>
+                </label>
+                <button class="manage-stage-groups" on:click={openStageGroupEditor}>{lang === 'ru' ? 'Распределить этапы по группам' : 'Assign stages to groups'}</button>
+            {/if}
             <label><span use:icon={'panel-left'}></span>{words.slice}
                 <select bind:value={sliceBy} on:change={() => { sliceValue = ''; savePreferences(); }}>
                     <option value="none">{words.none}</option>
@@ -867,6 +917,28 @@
             </div>
             {#if activeViewId !== 'all'}<button class="delete-view" on:click={() => { deleteActiveView(); viewMenuOpen = false; }}>{lang === 'ru' ? 'Удалить представление' : 'Delete view'}</button>{/if}
         </div>
+    {/if}
+
+    {#if stageGroupEditorOpen}
+        <section class="stage-group-editor" aria-label={lang === 'ru' ? 'Группы этапов' : 'Stage groups'}>
+            <div class="stage-group-editor-heading"><strong>{lang === 'ru' ? 'Группы этапов' : 'Stage groups'}</strong>
+                <span>{lang === 'ru' ? 'Укажите одну группу для нескольких этапов, например «Прототип» или «Релиз».' : 'Give several stages the same group, such as Prototype or Release.'}</span>
+            </div>
+            <datalist id={`stage-groups-${scope.id}`}>{#each stageGroupNames as name}<option value={name}></option>{/each}</datalist>
+            <div class="stage-group-assignments">
+                {#each allStages as stage (stage.key)}
+                    <label><span title={stage.label}>{stage.label}</span>
+                        <input value={stageGroupDrafts[stageKey(stage)] || ''} list={`stage-groups-${scope.id}`} disabled={busy}
+                            placeholder={lang === 'ru' ? 'Без группы' : 'Ungrouped'} aria-label={`${stage.label}: ${lang === 'ru' ? 'Группа этапов' : 'Stage group'}`}
+                            on:input={(event) => stageGroupDrafts = { ...stageGroupDrafts, [stageKey(stage)]: event.currentTarget.value }} />
+                    </label>
+                {/each}
+            </div>
+            <div class="stage-group-editor-actions">
+                <button disabled={busy} on:click={() => stageGroupEditorOpen = false}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
+                <button class="mod-cta" disabled={busy} on:click={() => void saveStageGroups()}>{lang === 'ru' ? 'Сохранить группы' : 'Save groups'}</button>
+            </div>
+        </section>
     {/if}
 
     {#if showArchive}<section class="archive-list">
@@ -916,8 +988,23 @@
                 </tr></thead>
                 <tbody>
                     {#each groups as group (group.key)}
+                        {#if group.collection?.first}
+                            <tr class="stage-collection-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                <div class="stage-collection-content">
+                                    <button class="group-toggle" title={group.collection.label} aria-label={group.collection.label}
+                                        aria-expanded={!collapsedStageGroups.has(group.collection.key)} on:click={() => toggleStageGroup(group.collection!.key)}>
+                                        <span use:icon={collapsedStageGroups.has(group.collection.key) ? 'chevron-right' : 'chevron-down'}></span>
+                                    </button>
+                                    <span class="stage-collection-icon" use:icon={'folders'}></span>
+                                    <button class="stage-collection-title" on:click={() => toggleStageGroup(group.collection!.key)}>{group.collection.label}</button>
+                                    <span class="group-count">{group.collection.stages} {lang === 'ru' ? 'этапов' : 'stages'}</span>
+                                    <SubIssuesProgress done={group.collection.done} total={group.collection.stages} label={lang === 'ru' ? 'Выполнено этапов' : 'Completed stages'} />
+                                </div>
+                            </td></tr>
+                        {/if}
+                        {#if !group.collection || !collapsedStageGroups.has(group.collection.key)}
                         {#if groupBy !== 'none'}
-                            {#if groupBy === 'section' && group.key.startsWith('Этап ')}
+                            {#if groupBy === 'section' && (group.key.startsWith('Этап ') || stageGrouping !== 'none')}
                             <tr class="stage-row" on:dragover|preventDefault on:drop={() => dropTask(group)}>
                                 <td class="row-index"><span class="row-number">{group.key.match(/^Этап\s+(\d+)/)?.[1] || ''}</span></td>
                                 <td class="title-cell"><div class="stage-content">
@@ -1138,6 +1225,7 @@
                             </td></tr>
                             {/if}
                         {/if}
+                        {/if}
                     {/each}
                 </tbody>
             </table>
@@ -1242,6 +1330,20 @@
     .group-row td { color:var(--text-normal); }
     .project-grid .stage-row td { height:40px; background:var(--background-primary); }
     .stage-content { display:flex; align-items:center; gap:7px; min-width:0; }
+    .project-grid .stage-collection-row td { height:42px; background:var(--background-secondary); border-top:1px solid var(--background-modifier-border); }
+    .stage-collection-content { display:flex; align-items:center; gap:9px; }
+    .stage-collection-icon { display:block; width:17px; height:17px; color:var(--interactive-accent); }
+    .stage-collection-title { padding:0; border:0; box-shadow:none; background:transparent; color:var(--text-normal); font-weight:650; text-align:left; }
+    .stage-collection-content :global(.subissue-progress) { margin-left:auto; }
+    .manage-stage-groups { margin:3px 6px; font-size:.75rem; }
+    .stage-group-editor { flex:none; padding:12px 16px; border-bottom:1px solid var(--background-modifier-border); background:var(--background-secondary); }
+    .stage-group-editor-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:10px; font-size:.8rem; }
+    .stage-group-editor-heading span { color:var(--text-muted); }
+    .stage-group-assignments { max-height:240px; overflow:auto; }
+    .stage-group-assignments label { display:grid; grid-template-columns:minmax(180px,1fr) minmax(140px,240px); align-items:center; gap:12px; padding:4px 0; font-size:.78rem; }
+    .stage-group-assignments label > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .stage-group-assignments input { width:100%; height:30px; }
+    .stage-group-editor-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
     .stage-icon { display:inline-flex; flex:none; width:17px; height:17px; color:var(--color-green); }
     .stage-title { min-width:0; overflow:hidden; padding:0; border:0; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.8rem; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
     .stage-title:hover { color:var(--text-accent); text-decoration:underline; }
@@ -1295,5 +1397,9 @@
     .no-results button { font-size:.77rem; }
     .undo-bar { position:absolute; z-index:15; right:16px; bottom:15px; display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid var(--background-modifier-border); border-radius:6px; background:var(--background-primary); box-shadow:var(--shadow-l); font-size:.76rem; }
     .undo-bar button { padding:3px 5px; border:0; box-shadow:none; background:transparent; color:var(--text-accent); font-size:.76rem; }.undo-bar button span { display:block; width:13px; height:13px; }
-    @media (max-width:650px) { .result-count { display:none; }.slice-panel { flex-basis:145px; }.view-menu { max-width:calc(100% - 20px); } }
+    @media (max-width:650px) {
+        .result-count { display:none; }.slice-panel { flex-basis:145px; }.view-menu { max-width:calc(100% - 20px); }
+        .stage-group-editor { padding:10px; }
+        .stage-group-assignments label { grid-template-columns:minmax(0,1fr) minmax(120px,1fr); }
+    }
 </style>

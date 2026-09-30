@@ -10,6 +10,8 @@ export interface ProjectScopeDefinition {
     color?: string;
     templatePath?: string;
     defaultSubtasks?: string;
+    /** Local groups above stages, keyed by the persistent stage key. */
+    stageGroups?: Record<string, string>;
     /**
      * Comma-separated list of paths/prefixes to exclude from this scope.
      * Examples: "Archive/, Templates/MyTask.md, _daily"

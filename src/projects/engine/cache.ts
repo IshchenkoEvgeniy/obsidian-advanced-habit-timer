@@ -1,8 +1,15 @@
-import type { ProjectTask } from '../types';
+import type { ProjectScopeDefinition, ProjectTask } from '../types';
+
+/** Settings that affect parsed tasks, independent of the Markdown file's mtime. */
+export function projectScopeCacheSignature(scope: ProjectScopeDefinition): string {
+    return JSON.stringify([scope.sourceType, scope.sourceValue, scope.statuses, scope.color || '', scope.excludePatterns || '']);
+}
+
+type CacheEntry = { mtime: number; tasks: ProjectTask[]; signature?: string };
 
 export class ProjectCache {
     /** Per-instance cache: path → { mtime, tasks }. */
-    private fileCache = new Map<string, { mtime: number, tasks: ProjectTask[] }>();
+    private fileCache = new Map<string, CacheEntry>();
 
     /** Remove one entry (call on file rename/delete). */
     invalidateCacheEntry(path: string) {
@@ -23,7 +30,7 @@ export class ProjectCache {
         return this.fileCache.get(path);
     }
 
-    set(path: string, data: { mtime: number, tasks: ProjectTask[] }) {
+    set(path: string, data: CacheEntry) {
         this.fileCache.set(path, data);
     }
 }
