@@ -14,6 +14,7 @@
     import { buildTableHierarchy } from './table-hierarchy';
     import { collectTableStages, groupTableStages, tableStageKey, type TableRowGroup, type StageGrouping } from './table-stage-groups';
     import { fieldKeys, hasCurrentTableViewConfig, normalizeTableViewConfig, type Field, type GroupField, type SortRule, type ViewConfig, type SavedView } from './table-view-config';
+    import { clampColumnWidth, defaultColumnWidth, minimumColumnWidth, normalizeColumnWidths, type ColumnWidths } from './table-column-widths';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -76,6 +77,66 @@
     let collapsedStageGroups = new Set<string>();
     let stageGroupEditorOpen = false;
     let stageGroupDrafts: Record<string, string> = {};
+    let columnWidths: ColumnWidths = {};
+    let resizingColumn = '';
+
+    const resizeColumn: Action<HTMLTableCellElement, { key: string; label: string; width: number }> = (node, initial) => {
+        let config = initial;
+        let pointer: { id: number; x: number; width: number } | null = null;
+        const handle = node.ownerDocument.createElement('button');
+        handle.type = 'button';
+        handle.className = 'column-resize-handle';
+        handle.draggable = false;
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'vertical');
+        node.appendChild(handle);
+        function update(next: typeof initial): void {
+            config = next;
+            handle.title = lang === 'ru' ? 'Перетащите для изменения ширины. Двойной щелчок — сброс.' : 'Drag to resize. Double-click to reset.';
+            handle.setAttribute('aria-label', `${lang === 'ru' ? 'Ширина колонки' : 'Column width'}: ${next.label}`);
+            handle.setAttribute('aria-valuemin', String(minimumColumnWidth(next.key)));
+            handle.setAttribute('aria-valuemax', '1400');
+            handle.setAttribute('aria-valuenow', String(next.width));
+        }
+        function finish(): void {
+            if (!pointer) return;
+            const id = pointer.id;
+            pointer = null;
+            resizingColumn = '';
+            if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+            saveColumnWidths();
+        }
+        handle.onpointerdown = event => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            pointer = { id: event.pointerId, x: event.clientX, width: node.getBoundingClientRect().width };
+            resizingColumn = config.key;
+            handle.setPointerCapture(event.pointerId);
+        };
+        handle.onpointermove = event => {
+            if (!pointer || event.pointerId !== pointer.id) return;
+            setColumnWidth(config.key, pointer.width + event.clientX - pointer.x);
+        };
+        handle.onpointerup = finish;
+        handle.onpointercancel = finish;
+        handle.onlostpointercapture = finish;
+        handle.onclick = event => event.stopPropagation();
+        handle.ondblclick = event => { event.stopPropagation(); resetColumnWidth(config.key); };
+        handle.ondragstart = event => { event.preventDefault(); event.stopPropagation(); };
+        handle.onkeydown = event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.key === 'Home') resetColumnWidth(config.key);
+            else {
+                setColumnWidth(config.key, config.width + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 40 : 10));
+                saveColumnWidths();
+            }
+        };
+        update(initial);
+        return { update, destroy() { pointer = null; resizingColumn = ''; handle.remove(); } };
+    };
 
     $: lang = plugin.settings.language;
     $: words = lang === 'ru' ? {
@@ -116,6 +177,9 @@
     $: shownFields = fieldOrder.filter(field => visible.has(field) && (field !== 'section' || hasSections));
     $: customFields = (scope.githubFields || []).filter(field => field.name !== 'Status' &&
         editableGitHubTypes.includes(field.type) && !hiddenGitHub.has(field.id));
+    $: tableColumns = ['title', ...shownFields.map(field => `field:${field}`), ...customFields.map(field => `github:${field.id}`)]
+        .map(key => ({ key, width: columnWidths[key] ?? defaultColumnWidth(key) }));
+    $: tableWidth = 80 + tableColumns.reduce((sum, column) => sum + column.width, 0);
     $: hierarchy = buildTableHierarchy(ctx.allTasks, ctx.columns[ctx.columns.length - 1] || 'Done');
     $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words),
         scope, groupBy === 'section' ? stageGrouping : 'none', hierarchy.stageProgress,
@@ -135,7 +199,8 @@
         groupBy !== activeSavedConfig.groupBy || sliceBy !== activeSavedConfig.sliceBy || sliceValue !== activeSavedConfig.sliceValue ||
         JSON.stringify(sortRules) !== JSON.stringify(activeSavedConfig.sortRules) ||
         showEstimateSum !== activeSavedConfig.showEstimateSum || showSpentSum !== activeSavedConfig.showSpentSum ||
-        stageGrouping !== (activeSavedConfig.stageGrouping || 'none');
+        stageGrouping !== (activeSavedConfig.stageGrouping || 'none') ||
+        JSON.stringify(columnWidths) !== JSON.stringify(activeSavedConfig.columnWidths || {});
     $: if (scope.id === loadedScopeId) saveCollapsePreferences(collapsed, collapsedParents, collapsedTasks, collapsedStageGroups);
 
     function prefKey(id: string): string { return `habit-timer:project-table:${id}`; }
@@ -145,7 +210,24 @@
 
     function captureConfig(): ViewConfig {
         return { query, visible: [...visible], fieldOrder: [...fieldOrder], hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum, stageGrouping };
+            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum, stageGrouping, columnWidths: { ...columnWidths } };
+    }
+
+    function setColumnWidth(key: string, width: number): void {
+        columnWidths = { ...columnWidths, [key]: clampColumnWidth(key, width) };
+    }
+
+    function resetColumnWidth(key: string): void {
+        const next = { ...columnWidths };
+        delete next[key];
+        columnWidths = next;
+        saveColumnWidths();
+    }
+
+    function saveColumnWidths(): void {
+        savedViews = savedViews.map(view => view.id === activeViewId
+            ? { ...view, config: { ...view.config, columnWidths: { ...columnWidths } } } : view);
+        savePreferences();
     }
 
     function applyConfig(config: ViewConfig): void {
@@ -161,6 +243,7 @@
         showEstimateSum = config.showEstimateSum !== false;
         showSpentSum = config.showSpentSum === true;
         stageGrouping = config.stageGrouping || 'none';
+        columnWidths = normalizeColumnWidths(config.columnWidths);
         selectedCells = new Set();
     }
 
@@ -186,6 +269,7 @@
         collapsedTasks = new Set();
         collapsedStageGroups = new Set();
         stageGrouping = 'none';
+        columnWidths = {};
         stageGroupEditorOpen = false;
         savedViews = [];
         activeViewId = 'all';
@@ -230,7 +314,7 @@
         try {
             localStorage.setItem(prefKey(scope.id), JSON.stringify({
                 query, visible: [...visible], fieldOrder, hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-                sortRules, showEstimateSum, showSpentSum, stageGrouping, savedViews, activeViewId,
+                sortRules, showEstimateSum, showSpentSum, stageGrouping, columnWidths, savedViews, activeViewId,
                 collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks],
                 collapsedStageGroups: [...collapsedStageGroups]
             }));
@@ -915,6 +999,7 @@
                     {/if}
                 {/each}
             </div>
+            <button class="reset-column-widths" on:click={() => { columnWidths = {}; saveColumnWidths(); }}>{lang === 'ru' ? 'Сбросить ширину колонок' : 'Reset column widths'}</button>
             {#if activeViewId !== 'all'}<button class="delete-view" on:click={() => { deleteActiveView(); viewMenuOpen = false; }}>{lang === 'ru' ? 'Удалить представление' : 'Delete view'}</button>{/if}
         </div>
     {/if}
@@ -958,18 +1043,24 @@
             </aside>
         {/if}
         <div class="grid-scroll">
-            <table class="project-grid" role="grid" tabindex="0" on:keydown={(event) => void tableKeydown(event)}>
+            <table class="project-grid" class:resizing-columns={Boolean(resizingColumn)} style={`width:${tableWidth}px`} role="grid" tabindex="0" on:keydown={(event) => void tableKeydown(event)}>
+                <colgroup>
+                    <col style="width:44px" />
+                    {#each tableColumns as column (column.key)}<col style={`width:${column.width}px`} />{/each}
+                    <col style="width:36px" />
+                </colgroup>
                 <thead><tr>
                     <th class="row-index"><input type="checkbox" aria-label={words.selectAll} checked={totalVisible > 0 && groups.every(group => group.rows.every(task => ctx.selectedTasks.has(task.id)))} on:change={toggleSelectAll} /></th>
-                    <th class="title-column"><button on:click={() => toggleSort('title')}>{words.title}{#if sortRules.find(rule => rule.field === 'title')?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === 'title')?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button></th>
+                    <th class="title-column" use:resizeColumn={{ key: 'title', label: words.title, width: columnWidths.title ?? defaultColumnWidth('title') }}><button on:click={() => toggleSort('title')}>{words.title}{#if sortRules.find(rule => rule.field === 'title')?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === 'title')?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button></th>
                     {#each shownFields as field (field)}
-                        <th class:date-column={field === 'start' || field === 'due'} draggable="true" on:dragstart={() => draggedField = field} on:dragover|preventDefault on:drop={() => reorderField(field)}>
+                        <th class:date-column={field === 'start' || field === 'due'} draggable={!resizingColumn} on:dragstart={() => draggedField = field} on:dragover|preventDefault on:drop={() => reorderField(field)}
+                            use:resizeColumn={{ key: `field:${field}`, label: fieldLabel(field), width: columnWidths[`field:${field}`] ?? defaultColumnWidth(`field:${field}`) }}>
                             <button on:click={() => toggleSort(field)}>{fieldLabel(field)}{#if sortRules.find(rule => rule.field === field)?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === field)?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button>
                             <button class="header-hide" title={words.hide} on:click={() => setVisible(field)}><span use:icon={'x'}></span></button>
                         </th>
                     {/each}
                     {#each customFields as field (field.id)}
-                        <th class:date-column={field.type === 'DATE'}>
+                        <th class:date-column={field.type === 'DATE'} use:resizeColumn={{ key: `github:${field.id}`, label: field.name, width: columnWidths[`github:${field.id}`] ?? defaultColumnWidth(`github:${field.id}`) }}>
                             <button>{field.name}</button>
                             <button class="header-hide" title={words.hide} on:click={() => toggleCustomField(field.id)}><span use:icon={'x'}></span></button>
                         </th>
@@ -1032,7 +1123,7 @@
                                 </div></td>
                                 {#each shownFields as field (field)}
                                     <td class:field-status={field === 'status'}>
-                                        {#if field === 'subIssues'}<SubIssuesProgress done={hierarchy.stageProgress.get(group.key)?.done || 0} total={hierarchy.stageProgress.get(group.key)?.total || 0} label={words.subIssues} />
+                                        {#if field === 'subIssues'}<SubIssuesProgress stretch done={hierarchy.stageProgress.get(group.key)?.done || 0} total={hierarchy.stageProgress.get(group.key)?.total || 0} label={words.subIssues} />
                                         {:else if field === 'status'}<span class="status-pill">{hierarchy.stageProgress.get(group.key)?.done === hierarchy.stageProgress.get(group.key)?.total ? ctx.columns[ctx.columns.length - 1] : ctx.columns[0]}</span>
                                         {:else if field === 'section'}<span class="plain-value">{group.label}</span>
                                         {:else if field === 'estimate' && showEstimateSum}<span class="plain-value">{plugin.formatTime(group.estimate)}</span>
@@ -1093,7 +1184,7 @@
                                             </div></td>
                                             {#each shownFields as field (field)}
                                                 <td class:field-status={field === 'status'}>
-                                                    {#if field === 'subIssues'}<SubIssuesProgress done={hierarchy.groupProgress.get(ancestor.id)?.done || 0} total={hierarchy.groupProgress.get(ancestor.id)?.total || 0} label={words.subIssues} />
+                                                    {#if field === 'subIssues'}<SubIssuesProgress stretch done={hierarchy.groupProgress.get(ancestor.id)?.done || 0} total={hierarchy.groupProgress.get(ancestor.id)?.total || 0} label={words.subIssues} />
                                                     {:else if field === 'status'}<span class="status-pill">{hierarchy.groupProgress.get(ancestor.id)?.done === hierarchy.groupProgress.get(ancestor.id)?.total ? ctx.columns[ctx.columns.length - 1] : ctx.columns[0]}</span>
                                                     {:else if field === 'section'}<span class="plain-value">{task.section}</span>{/if}
                                                 </td>
@@ -1176,9 +1267,9 @@
                                                 <span class="plain-value">{value(task, field) || '—'}</span>
                                             {:else if field === 'subIssues'}
                                                 {#if hierarchy.taskChildren.get(task.id)?.length}
-                                                    <SubIssuesProgress done={hierarchy.taskChildren.get(task.id)!.filter(child => child.status === ctx.columns[ctx.columns.length - 1]).length} total={hierarchy.taskChildren.get(task.id)!.length} label={words.subIssues} />
+                                                    <SubIssuesProgress stretch done={hierarchy.taskChildren.get(task.id)!.filter(child => child.status === ctx.columns[ctx.columns.length - 1]).length} total={hierarchy.taskChildren.get(task.id)!.length} label={words.subIssues} />
                                                 {:else if scope.githubNativeItems?.[`leaf:${task.id}`]?.meta?.subIssues?.total || scope.githubBindings?.[task.id]?.meta?.subIssues?.total}
-                                                    <SubIssuesProgress done={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.completed} total={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.total} label={words.subIssues} />
+                                                    <SubIssuesProgress stretch done={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.completed} total={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.total} label={words.subIssues} />
                                                 {:else}<span class="plain-value" title={value(task, field)}>{value(task, field) || '—'}</span>{/if}
                                             {:else if field === 'section'}
                                                 <span class="plain-value" title={task.section || ''}>{task.section || '—'}</span>
@@ -1292,11 +1383,20 @@
     .slice-panel button:hover, .slice-panel button.chosen { background:var(--background-modifier-hover); }
     .slice-panel button em { color:var(--text-faint); font-size:.73rem; font-style:normal; }
     .grid-scroll { flex:1; min-width:0; overflow:auto; }
-    .project-grid { width:100%; min-width:800px; border:0; border-collapse:separate; border-spacing:0; table-layout:auto; font-size:.79rem; }
+    .project-grid { border:0; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:.79rem; }
+    .project-grid th, .project-grid td { box-sizing:border-box; }
+    .project-grid td { overflow:hidden; text-overflow:ellipsis; }
+    .project-grid td:has(.row-action-menu), .project-grid td.cell-selected { overflow:visible; }
+    .project-grid.resizing-columns { cursor:col-resize; user-select:none; }
+    .project-grid thead th > :global(.column-resize-handle) { position:absolute; z-index:12; top:0; right:-4px; display:block; width:9px; height:100%; min-width:0; margin:0; padding:0; border:0; border-radius:0; box-shadow:none; background:transparent; cursor:col-resize; touch-action:none; }
+    .project-grid thead th > :global(.column-resize-handle:hover), .project-grid thead th > :global(.column-resize-handle:focus-visible) { background:var(--interactive-accent); outline:0; }
+    .reset-column-widths { margin-top:8px; font-size:.77rem; }
     .project-grid th, .project-grid td { height:35px; padding:0 9px; border-right:1px solid var(--background-modifier-border); border-bottom:1px solid var(--background-modifier-border); white-space:nowrap; }
     .project-grid th:last-child, .project-grid td:last-child { border-right:0; }
     .project-grid thead th { position:sticky; z-index:5; top:0; height:31px; background:var(--background-primary); color:var(--text-muted); text-align:left; font-size:.74rem; font-weight:500; }
-    .project-grid thead th > button { display:inline-flex; align-items:center; gap:5px; max-width:100%; padding:3px 0; border:0; box-shadow:none; background:transparent; color:inherit; font:inherit; text-align:left; }
+    .project-grid thead th > button { display:inline-flex; align-items:center; gap:5px; max-width:calc(100% - 22px); overflow:hidden; padding:3px 0; border:0; box-shadow:none; background:transparent; color:inherit; font:inherit; text-align:left; white-space:nowrap; }
+    .project-grid .add-field > button, .project-grid .title-column > button { max-width:100%; }
+    .project-grid thead th > button.header-hide { position:absolute; right:9px; top:50%; transform:translateY(-50%); }
     .project-grid thead th > button span, .header-hide span { width:13px; height:13px; }
     .project-grid thead th:hover { background:var(--background-secondary); }
     .project-grid th.row-index, .project-grid td.row-index { position:sticky; left:0; z-index:6; width:44px; min-width:44px; max-width:44px; padding:0 6px; background:var(--background-primary); text-align:center; }
@@ -1309,8 +1409,7 @@
     .project-grid tbody tr.selected td { background:color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary)); }
     .project-grid td.cell-selected { position:relative; box-shadow:inset 0 0 0 2px var(--interactive-accent); }
     .fill-handle { position:absolute; right:-3px; bottom:-3px; z-index:3; width:8px; height:8px; border:1px solid var(--background-primary); border-radius:2px; background:var(--interactive-accent); cursor:crosshair; }
-    .project-grid .title-column { min-width:300px; width:38%; }
-    .project-grid .title-cell { min-width:300px; max-width:600px; }
+    .project-grid .title-column, .project-grid .title-cell { min-width:0; }
     .title-inner { display:flex; align-items:center; gap:7px; min-width:0; }
     .task-icon { flex:none; width:16px; height:16px; color:var(--color-green); }
     .task-check-button { display:flex; align-items:center; justify-content:center; flex:none; width:20px; height:20px; padding:0; border:0; background:transparent; cursor:pointer; }
@@ -1376,13 +1475,13 @@
     .subissue-add-row button { height:26px; margin-right:5px; padding:2px 8px; }
     .group-count, .group-sum { margin-left:8px; padding:2px 6px; border:1px solid var(--background-modifier-border); border-radius:9px; background:var(--background-primary); color:var(--text-muted); font-size:.68rem; }
     .group-sum { border-radius:4px; }
-    .status-pill, .priority-pill { max-width:100%; min-width:92px; height:24px; padding:2px 19px 2px 8px; border:1px solid var(--background-modifier-border); border-radius:12px; background:var(--background-secondary); color:var(--text-normal); font-size:.73rem; }
+    .status-pill, .priority-pill { box-sizing:border-box; max-width:100%; min-width:0; height:24px; padding:2px 19px 2px 8px; border:1px solid var(--background-modifier-border); border-radius:12px; background:var(--background-secondary); color:var(--text-normal); font-size:.73rem; }
     .status-pill { background:color-mix(in srgb, var(--interactive-accent) 11%, var(--background-primary)); }
     .priority-pill.high { background:color-mix(in srgb, var(--color-red) 13%, var(--background-primary)); }.priority-pill.medium { background:color-mix(in srgb, var(--color-yellow) 15%, var(--background-primary)); }.priority-pill.low { background:color-mix(in srgb, var(--color-blue) 13%, var(--background-primary)); }
-    .cell-input { width:100%; min-width:105px; max-width:240px; height:25px; padding:2px 5px; border:1px solid transparent; border-radius:4px; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.76rem; }
+    .cell-input { width:100%; min-width:0; height:25px; padding:2px 5px; border:1px solid transparent; border-radius:4px; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.76rem; }
     .cell-input:hover, .cell-input:focus { border-color:var(--background-modifier-border); background:var(--background-primary); }
-    .tags-input { color:var(--text-accent); }.date-input { min-width:120px; }.duration-input { min-width:92px; }
-    .plain-value { display:block; max-width:220px; overflow:hidden; color:var(--text-muted); text-overflow:ellipsis; }
+    .tags-input { color:var(--text-accent); }.date-input, .duration-input { min-width:0; }
+    .plain-value { display:block; max-width:100%; overflow:hidden; color:var(--text-muted); text-overflow:ellipsis; }
     .project-grid th.add-field, .project-grid td.end-cell { width:36px; min-width:36px; padding:0 7px; }
     .project-grid th.add-field { z-index:9; }
     .add-field button span { width:15px; height:15px; }

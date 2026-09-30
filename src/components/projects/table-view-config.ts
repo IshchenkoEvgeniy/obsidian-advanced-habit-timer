@@ -1,4 +1,5 @@
 import type { StageGrouping } from './table-stage-groups';
+import { normalizeColumnWidths, type ColumnWidths } from './table-column-widths';
 
 export const fieldKeys = ['assignees', 'status', 'linkedPrs', 'subIssues', 'iteration', 'estimate', 'start', 'due', 'priority', 'section', 'tags', 'habit', 'spent'] as const;
 export type Field = typeof fieldKeys[number];
@@ -6,7 +7,7 @@ export type GroupField = 'none' | 'section' | 'status' | 'priority' | 'habit';
 export type SortRule = { field: Field | 'title'; direction: 1 | -1 };
 export type ViewConfig = { query: string; visible: Field[]; fieldOrder: Field[]; hiddenGitHub?: string[];
     groupBy: GroupField; sliceBy: GroupField; sliceValue: string; sortRules: SortRule[];
-    showEstimateSum: boolean; showSpentSum: boolean; stageGrouping?: StageGrouping };
+    showEstimateSum: boolean; showSpentSum: boolean; stageGrouping?: StageGrouping; columnWidths?: ColumnWidths };
 export type SavedView = { id: string; name: string; config: ViewConfig };
 
 const isField = (key: unknown): key is Field => fieldKeys.includes(key as Field);
@@ -19,7 +20,7 @@ function isSortRule(value: unknown): value is SortRule {
 }
 
 export function hasCurrentTableViewConfig(saved: Record<string, unknown>): boolean {
-    return Array.isArray(saved.visible) || typeof saved.query === 'string' || Array.isArray(saved.fieldOrder);
+    return Array.isArray(saved.visible) || typeof saved.query === 'string' || Array.isArray(saved.fieldOrder) || Boolean(saved.columnWidths);
 }
 
 /** Read old preferences without letting an older saved-view baseline replace the current draft. */
@@ -38,6 +39,7 @@ export function normalizeTableViewConfig(input: unknown, fallback: ViewConfig): 
         sortRules: Array.isArray(saved.sortRules) ? saved.sortRules.filter(isSortRule) : fallback.sortRules,
         showEstimateSum: typeof saved.showEstimateSum === 'boolean' ? saved.showEstimateSum : fallback.showEstimateSum,
         showSpentSum: typeof saved.showSpentSum === 'boolean' ? saved.showSpentSum : fallback.showSpentSum,
+        columnWidths: normalizeColumnWidths(saved.columnWidths),
         stageGrouping: stageGrouping === 'none' || stageGrouping === 'local' ||
             typeof stageGrouping === 'string' && stageGrouping.startsWith('github:') && stageGrouping.length > 7
             ? stageGrouping as StageGrouping : fallback.stageGrouping || 'none'
