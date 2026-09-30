@@ -409,8 +409,9 @@ export class ProjectMutator {
             await this.app.vault.modify(task.file, lines.join('\n'));
         } else {
             await this.app.fileManager.processFrontMatter(task.file, frontmatter => {
-                if (archived) frontmatter['project_archived'] = true;
-                else delete frontmatter['project_archived'];
+                const properties = frontmatter as Record<string, unknown>;
+                if (archived) properties['project_archived'] = true;
+                else delete properties['project_archived'];
             });
         }
     }

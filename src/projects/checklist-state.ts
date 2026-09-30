@@ -268,7 +268,10 @@ export class ChecklistStateStore {
 
     private async updateNote(entry: ChecklistStateEntry, source: string, description?: string): Promise<string | undefined> {
         if (!entry.notePath && !description?.trim()) return undefined;
-        const path = entry.notePath || normalizePath(`${noteFolder(this.app.vault.getAbstractFileByPath(source) as TFile)}/${noteFilename(entry.id, entry.title)}`);
+        const sourceFile = this.app.vault.getAbstractFileByPath(source);
+        if (!(sourceFile instanceof TFile)) throw new Error(`Checklist source is missing: ${source}`);
+        const folder = noteFolder(sourceFile);
+        const path = entry.notePath || normalizePath(`${folder}/${noteFilename(entry.id, entry.title)}`);
         const existing = this.app.vault.getAbstractFileByPath(path);
         const current = existing instanceof TFile ? await this.app.vault.read(existing) : '';
         const body = description !== undefined ? description.trim() :
@@ -277,7 +280,6 @@ export class ChecklistStateStore {
         if (existing instanceof TFile) {
             if (current !== content) await this.app.vault.modify(existing, content);
         } else {
-            const folder = noteFolder(this.app.vault.getAbstractFileByPath(source) as TFile);
             if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
             await this.app.vault.create(path, content);
         }

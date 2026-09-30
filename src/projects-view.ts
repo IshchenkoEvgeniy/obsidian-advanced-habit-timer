@@ -280,12 +280,12 @@ export class ProjectsView extends ItemView {
             modal.setTitle('GitHub Projects');
             modal.contentEl.createEl('p', { text: ru ? 'Адрес GitHub Project' : 'Project URL' });
             const urlInput = modal.contentEl.createEl('input', { type: 'url', value: scope.githubProjectUrl || 'https://github.com/users/IshchenkoEvgeniy/projects/2' });
-            urlInput.style.width = '100%';
+            urlInput.setCssStyles({ width: '100%' });
             modal.contentEl.createEl('p', { text: ru
                 ? 'Classic PAT: scope project; для создания Issues также repo или public_repo. Токен хранится только в памяти окна.'
                 : 'Classic PAT: project scope; creating Issues also needs repo or public_repo. The token stays in view memory.' });
             const tokenInput = modal.contentEl.createEl('input', { type: 'password', value: this.githubToken });
-            tokenInput.style.width = '100%';
+            tokenInput.setCssStyles({ width: '100%' });
             modal.contentEl.createEl('p', { text: ru
                 ? 'Для этапов и настоящих Sub-issues укажите репозиторий игры. Без него структурированный чеклист не будет отправлен в GitHub. Не указывайте репозиторий Obsidian-плагина.'
                 : 'Enter the game repository for stages and native Sub-issues. A structured checklist cannot sync without it. Do not enter the Obsidian plugin repository.' });
@@ -293,7 +293,7 @@ export class ProjectsView extends ItemView {
                 type: 'url', value: scope.githubIssuesRepositoryUrl || '',
                 placeholder: 'https://github.com/OWNER/GAME-REPOSITORY'
             });
-            repositoryInput.style.width = '100%';
+            repositoryInput.setCssStyles({ width: '100%' });
             const row = modal.contentEl.createDiv('modal-button-container');
             new ButtonComponent(row).setButtonText(ru ? 'Отмена' : 'Cancel').onClick(() => finish(null));
             new ButtonComponent(row).setButtonText(ru ? 'Загрузить проект' : 'Load project').setCta().onClick(() => {
@@ -446,12 +446,12 @@ export class ProjectsView extends ItemView {
             const report = (): void => { if (changed && changed % 25 === 0) new Notice(`GitHub sync: ${changed} changes applied…`); };
 
             for (const pair of plan.pairs) {
-                const oldBinding = scope.githubBindings![pair.task.id];
+                const oldBinding = scope.githubBindings[pair.task.id];
                 const localFields = { ...(oldBinding?.localFields || oldBinding?.meta?.fields || pair.item.fields) };
                 const baseFields = { ...(oldBinding?.baseFields || oldBinding?.meta?.fields || pair.item.fields) };
                 const current = localValues(pair.task);
                 const remote = remoteValues(pair.item, scope,
-                    pair.newlyLinked ? pair.task.status : scope.githubBindings![pair.task.id]?.base.status);
+                    pair.newlyLinked ? pair.task.status : scope.githubBindings[pair.task.id]?.base.status);
                 const target = { ...current };
                 for (const field of pair.pull) target[field] = remote[field] as never;
                 const localStatus = pair.pull.includes('status') || pair.pull.includes('name');
@@ -492,7 +492,7 @@ export class ProjectsView extends ItemView {
                     if (value === undefined) delete baseFields[field.name];
                     else baseFields[field.name] = value;
                 }
-                const base = { ...(scope.githubBindings![pair.task.id]?.base || current) };
+                const base = { ...(scope.githubBindings[pair.task.id]?.base || current) };
                 for (const field of ['name', 'status', 'archived'] as SyncedField[]) {
                     if (pair.conflict.includes(field)) continue;
                     if (field === 'status' && pair.push.includes('status') && !statusOption(current.status)) continue;
@@ -512,8 +512,8 @@ export class ProjectsView extends ItemView {
                             Math.abs((candidates[1]!.sourceLine || 0) - pair.task.sourceLine)) bindingKey = candidates[0]!.id;
                     }
                 }
-                if (bindingKey !== pair.task.id) delete scope.githubBindings![pair.task.id];
-                scope.githubBindings![bindingKey] = { itemId: pair.item.id, base, localFields, baseFields, meta: itemMeta(pair.item) };
+                if (bindingKey !== pair.task.id) delete scope.githubBindings[pair.task.id];
+                scope.githubBindings[bindingKey] = { itemId: pair.item.id, base, localFields, baseFields, meta: itemMeta(pair.item) };
                 await this.plugin.saveSettings();
             }
 
@@ -522,7 +522,7 @@ export class ProjectsView extends ItemView {
                 const body = `Imported from Obsidian project “${scope.name}”.\n\nSource: ${task.file.path}\n${marker}`;
                 const itemId = await client.createDraft(snapshot.id, task.name, body);
                 changed++; report();
-                scope.githubBindings![task.id] = {
+                scope.githubBindings[task.id] = {
                     itemId, base: { name: task.name, status: '', archived: false },
                     localFields: {}, baseFields: {}, meta: { contentType: 'DraftIssue', fields: {} }
                 };
@@ -531,18 +531,18 @@ export class ProjectsView extends ItemView {
                 if (option && plan.statusField) {
                     await client.updateStatus(snapshot.id, itemId, plan.statusField.id, option);
                     changed++; report();
-                    scope.githubBindings![task.id]!.base.status = task.status;
+                    scope.githubBindings[task.id]!.base.status = task.status;
                     await this.plugin.saveSettings();
                 } else if (task.status) warnings.push(`No GitHub Status option for: ${task.status}`);
                 if (task.archived) {
                     await client.setArchived(snapshot.id, itemId, true); changed++; report();
-                    scope.githubBindings![task.id]!.base.archived = true;
+                    scope.githubBindings[task.id]!.base.archived = true;
                     await this.plugin.saveSettings();
                 }
                 for (const { field, value } of initialFields(task)) {
                     await client.updateCustomField(snapshot.id, itemId, field, value);
-                    scope.githubBindings![task.id]!.localFields![field.name] = value;
-                    scope.githubBindings![task.id]!.baseFields![field.name] = value;
+                    scope.githubBindings[task.id]!.localFields![field.name] = value;
+                    scope.githubBindings[task.id]!.baseFields![field.name] = value;
                     changed++; report();
                     await this.plugin.saveSettings();
                 }
@@ -562,11 +562,11 @@ export class ProjectsView extends ItemView {
             if (createdLocalItems.length) {
                 const reloaded = await this.dataEngine.loadTasks(scope);
                 for (const item of createdLocalItems) {
-                    const candidates = reloaded.filter(task => task.name === item.title && !scope.githubBindings![task.id]);
+                    const candidates = reloaded.filter(task => task.name === item.title && !scope.githubBindings?.[task.id]);
                     if (candidates.length !== 1) { warnings.push(`Could not link imported task: ${item.title}`); continue; }
                     const task = candidates[0]!;
                     if (item.archived) await this.dataEngine.setArchived(task, true, scope.sourceType === 'file');
-                    scope.githubBindings![task.id] = { itemId: item.id,
+                    scope.githubBindings[task.id] = { itemId: item.id,
                         base: { name: item.title, status: item.status ? localStatusForRemote(scope, item.status) : '', archived: item.archived },
                         localFields: { ...item.fields }, baseFields: { ...item.fields }, meta: itemMeta(item) };
                     await this.plugin.saveSettings();

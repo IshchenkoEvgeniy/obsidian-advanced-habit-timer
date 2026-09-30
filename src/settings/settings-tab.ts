@@ -8,6 +8,10 @@ import type { HabitProperty, LibraryPropertyField, WeekdayKey } from '../types';
 import type { Language } from '../i18n';
 import type { ProjectScopeDefinition } from '../projects/types';
 
+declare const require: (moduleName: string) => {
+    promises: { readFile(path: string, encoding: 'utf8'): Promise<string> };
+};
+
 interface TelegramChatInfo { id?: string | number; }
 interface TelegramMessageInfo { chat?: TelegramChatInfo; }
 interface TelegramUpdateInfo { message?: TelegramMessageInfo; }
@@ -771,7 +775,9 @@ export class HabitTimerSettingTab extends PluginSettingTab {
             submitButton.setText(lang === 'ru' ? 'Импорт…' : 'Importing…');
             errorEl.setText('');
             try {
-                const fileSystem = require('fs') as typeof import('node:fs');
+                // Obsidian desktop exposes Node's require for reading an absolute path outside the vault.
+                // eslint-disable-next-line import/no-nodejs-modules
+                const fileSystem = require('fs');
                 const content = await fileSystem.promises.readFile(sourcePath, 'utf8');
                 if (!content.trim()) throw new Error(lang === 'ru' ? 'Файл пуст.' : 'The file is empty.');
                 const fileName = sourcePath.split(/[\\/]/).pop() || 'Checklist.md';

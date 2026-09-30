@@ -780,6 +780,8 @@
     }
 </script>
 
+<svelte:window on:keydown={(event) => { if (event.key === 'Escape' && viewMenuOpen) viewMenuOpen = false; }} />
+
 <div class="project-table-shell">
     <nav class="saved-view-tabs" aria-label={lang === 'ru' ? 'Представления таблицы' : 'Table views'}>
         {#each savedViews as saved (saved.id)}
@@ -819,8 +821,9 @@
     </div>
 
     {#if viewMenuOpen}
+        <button class="view-menu-dismiss" aria-label={lang === 'ru' ? 'Закрыть настройки вида' : 'Close view settings'} on:click={() => viewMenuOpen = false}></button>
         <div class="view-menu" role="dialog" aria-label={words.view}>
-            <div class="menu-title">{words.view}</div>
+            <div class="menu-title"><span>{words.view}</span><button title={lang === 'ru' ? 'Закрыть' : 'Close'} aria-label={lang === 'ru' ? 'Закрыть настройки вида' : 'Close view settings'} on:click={() => viewMenuOpen = false}><span use:icon={'x'}></span></button></div>
             <label class="rename-view">{lang === 'ru' ? 'Название' : 'Name'}
                 <input bind:value={renameViewName} on:change={renameActiveView} on:keydown={(event) => { if (event.key === 'Enter') renameActiveView(); }} />
             </label>
@@ -1168,8 +1171,12 @@
     .toolbar-actions { margin-left:auto; }
     .toolbar-actions button { display:flex; align-items:center; gap:7px; min-height:30px; padding:4px 9px; border:1px solid var(--background-modifier-border); border-radius:6px; box-shadow:none; background:var(--background-primary); color:var(--text-normal); font-size:.81rem; }
     .toolbar-actions button:hover, .toolbar-actions button.active { background:var(--background-modifier-hover); }
-    .view-menu { position:absolute; z-index:30; top:45px; right:10px; display:flex; flex-direction:column; gap:3px; width:290px; max-height:min(65vh,560px); padding:9px; overflow:auto; border:1px solid var(--background-modifier-border); border-radius:8px; background:var(--background-primary); box-shadow:var(--shadow-l); }
-    .menu-title { padding:4px 6px 8px; font-size:.85rem; font-weight:700; }
+    .view-menu-dismiss { position:absolute; z-index:29; inset:0; width:100%; height:100%; padding:0; border:0; border-radius:0; box-shadow:none; background:transparent; cursor:default; }
+    .view-menu { position:absolute; z-index:30; top:82px; right:10px; display:flex; flex-direction:column; gap:3px; width:290px; max-height:min(560px,calc(100% - 92px)); padding:9px; overflow-y:auto; border:1px solid var(--background-modifier-border); border-radius:8px; background:var(--background-primary); box-shadow:var(--shadow-l); }
+    .menu-title { position:sticky; z-index:1; top:-9px; display:flex; align-items:center; justify-content:space-between; min-height:31px; padding:4px 6px 8px; background:var(--background-primary); font-size:.85rem; font-weight:700; }
+    .menu-title button { display:flex; align-items:center; justify-content:center; width:23px; height:23px; padding:3px; border:0; border-radius:4px; box-shadow:none; background:transparent; color:var(--text-muted); }
+    .menu-title button:hover { background:var(--background-modifier-hover); color:var(--text-normal); }
+    .menu-title button span { width:15px; height:15px; }
     .view-menu .rename-view { display:flex; align-items:center; gap:6px; min-height:30px; padding:3px 6px; font-size:.77rem; }
     .rename-view input { width:155px; height:26px; margin-left:auto; padding:3px 6px; font-size:.77rem; }
     .delete-view { align-self:stretch; margin-top:7px; padding:7px 8px; border:0; border-top:1px solid var(--background-modifier-border); border-radius:0; box-shadow:none; background:transparent; color:var(--text-error); text-align:left; font-size:.77rem; }

@@ -275,7 +275,7 @@ export class ProjectParser {
             }
             const nestedGroupMatch = currentSection?.startsWith('Этап ') && line.match(/^[ \t]+-[ \t]+\*\*((?:\d+\.)+\d+)[ \t]+(.+?)\*\*[ \t]*$/);
             if (nestedGroupMatch && activeGroup && nestedGroupMatch[1]?.startsWith(`${activeGroup.number}.`)) {
-                activeNestedGroup = { id: `${currentSection}/${nestedGroupMatch[1]}`, number: nestedGroupMatch[1]!,
+                activeNestedGroup = { id: `${currentSection}/${nestedGroupMatch[1]}`, number: nestedGroupMatch[1],
                     title: `${nestedGroupMatch[1]} ${taskDisplayTitle(nestedGroupMatch[2] || '')}`, sourceLine: i };
                 currentTask = null;
                 checkboxParents.length = 0;

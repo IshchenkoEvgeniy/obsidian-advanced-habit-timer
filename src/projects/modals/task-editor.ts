@@ -103,7 +103,7 @@ export class TaskEditorModal extends Modal {
             .addTextArea(text => {
                 text.setValue(this.data.description || '').onChange(value => this.data.description = value);
                 text.inputEl.rows = 6;
-                text.inputEl.style.minWidth = '320px';
+                text.inputEl.setCssStyles({ minWidth: '320px' });
             });
 
         const habits = this.plugin.settings.properties.filter(p => p.type === 'timer' || !p.type).map(p => p.name);

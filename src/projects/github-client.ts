@@ -127,7 +127,11 @@ export class GitHubProjectsClient {
             throw: false
         });
         let parsed: { data?: T; errors?: { message: string }[]; message?: string };
-        try { parsed = response.json; }
+        try {
+            const raw: unknown = response.json;
+            if (!raw || typeof raw !== 'object') throw new Error('Invalid JSON');
+            parsed = raw as typeof parsed;
+        }
         catch { throw new Error(`GitHub returned HTTP ${response.status}`); }
         if (response.status >= 400 || parsed.errors?.length || !parsed.data) {
             throw new Error(parsed.errors?.map(error => error.message).join('; ') || parsed.message || `GitHub returned HTTP ${response.status}`);
