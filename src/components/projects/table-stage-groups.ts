@@ -1,9 +1,10 @@
 import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
 import type { SubIssueProgress } from './table-hierarchy';
+import { aggregateChecklistStatus } from '../../projects/checklist-status';
 
-export type StageGrouping = 'none' | 'local' | `github:${string}`;
+export type StageGrouping = 'none' | 'local' | 'status' | `github:${string}`;
 export type TableRowGroup = { key: string; label: string; rows: ProjectTask[]; estimate: number; spent: number };
-export type StageCollection = { key: string; label: string; stages: number; done: number; first: boolean };
+export type StageCollection = { key: string; label: string; stages: number; done: number; first: boolean; status?: string };
 export type GroupedStage = TableRowGroup & { collection?: StageCollection };
 
 export function tableStageKey(group: TableRowGroup): string {
@@ -43,17 +44,19 @@ function groupingValue(group: TableRowGroup, scope: ProjectScopeDefinition, mode
 }
 
 export function groupTableStages(groups: TableRowGroup[], scope: ProjectScopeDefinition, mode: StageGrouping,
-    progress: Map<string, SubIssueProgress>, emptyLabel: string): GroupedStage[] {
+    progress: Map<string, SubIssueProgress>, emptyLabel: string,
+    statuses = new Map<string, string>(), columns = scope.statuses.split(',').map(value => value.trim()).filter(Boolean)): GroupedStage[] {
     if (mode === 'none') return groups;
     const collections = new Map<string, TableRowGroup[]>();
     for (const stage of groups) {
-        const value = groupingValue(stage, scope, mode);
+        const value = mode === 'status' ? statuses.get(stage.key) || aggregateChecklistStatus(stage.rows, columns) : groupingValue(stage, scope, mode);
         const members = collections.get(value) || [];
         members.push(stage);
         collections.set(value, members);
     }
     // Keep the source order inside a group and place unassigned stages last.
-    const entries = [...collections].sort(([a], [b]) => Number(!a) - Number(!b));
+    const entries = [...collections].sort(([a], [b]) => mode === 'status'
+        ? columns.indexOf(a) - columns.indexOf(b) : Number(!a) - Number(!b));
     return entries.flatMap(([value, stages]) => {
         const done = stages.filter(stage => {
             const summary = progress.get(stage.key);
@@ -61,7 +64,7 @@ export function groupTableStages(groups: TableRowGroup[], scope: ProjectScopeDef
         }).length;
         return stages.map((stage, index) => ({ ...stage, collection: {
             key: JSON.stringify([mode, value]), label: value || emptyLabel,
-            stages: stages.length, done, first: index === 0
+            stages: stages.length, done, first: index === 0, ...(mode === 'status' ? { status: value } : {})
         } }));
     });
 }

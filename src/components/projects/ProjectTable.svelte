@@ -15,6 +15,7 @@
     import { collectTableStages, groupTableStages, tableStageKey, type TableRowGroup, type StageGrouping } from './table-stage-groups';
     import { fieldKeys, hasCurrentTableViewConfig, normalizeTableViewConfig, type Field, type GroupField, type SortRule, type ViewConfig, type SavedView } from './table-view-config';
     import { clampColumnWidth, defaultColumnWidth, minimumColumnWidth, normalizeColumnWidths, type ColumnWidths } from './table-column-widths';
+    import { aggregateChecklistStatus, projectStatusColor } from '../../projects/checklist-status';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -79,6 +80,30 @@
     let stageGroupDrafts: Record<string, string> = {};
     let columnWidths: ColumnWidths = {};
     let resizingColumn = '';
+    let toolbarHeight = 44;
+    const resizeToolbar: Action<HTMLDivElement> = node => {
+        let start: { id: number; y: number; height: number } | null = null;
+        node.onpointerdown = event => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            start = { id: event.pointerId, y: event.clientY, height: toolbarHeight };
+            node.setPointerCapture(event.pointerId);
+        };
+        node.onpointermove = event => {
+            if (start && event.pointerId === start.id) toolbarHeight = Math.max(40, Math.min(180, Math.round(start.height + event.clientY - start.y)));
+        };
+        const finish = (): void => {
+            if (!start) return;
+            const id = start.id;
+            start = null;
+            if (node.hasPointerCapture(id)) node.releasePointerCapture(id);
+            saveToolbarHeight();
+        };
+        node.onpointerup = finish;
+        node.onpointercancel = finish;
+        node.onlostpointercapture = finish;
+        return { destroy() { start = null; node.onpointerdown = node.onpointermove = node.onpointerup = node.onpointercancel = node.onlostpointercapture = null; } };
+    };
 
     const resizeColumn: Action<HTMLTableCellElement, { key: string; label: string; width: number }> = (node, initial) => {
         let config = initial;
@@ -181,9 +206,10 @@
         .map(key => ({ key, width: columnWidths[key] ?? defaultColumnWidth(key) }));
     $: tableWidth = 80 + tableColumns.reduce((sum, column) => sum + column.width, 0);
     $: hierarchy = buildTableHierarchy(ctx.allTasks, ctx.columns[ctx.columns.length - 1] || 'Done');
+    $: stageStatuses = new Map(collectTableStages(ctx.allTasks).map(stage => [stage.key, aggregateChecklistStatus(stage.rows, ctx.columns)]));
     $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words),
         scope, groupBy === 'section' ? stageGrouping : 'none', hierarchy.stageProgress,
-        lang === 'ru' ? 'Без группы этапов' : 'Ungrouped stages');
+        lang === 'ru' ? 'Без группы этапов' : 'Ungrouped stages', stageStatuses, ctx.columns);
     $: allStages = collectTableStages(ctx.allTasks);
     $: stageGroupNames = [...new Set(Object.values(stageGroupDrafts).map(name => name.trim()).filter(Boolean))];
     $: stageGroupingFields = (scope.githubFields || []).filter(field => field.name !== 'Status' && field.name !== 'Этап' &&
@@ -210,7 +236,7 @@
 
     function captureConfig(): ViewConfig {
         return { query, visible: [...visible], fieldOrder: [...fieldOrder], hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum, stageGrouping, columnWidths: { ...columnWidths } };
+            sortRules: sortRules.map(rule => ({ ...rule })), showEstimateSum, showSpentSum, stageGrouping, columnWidths: { ...columnWidths }, toolbarHeight };
     }
 
     function setColumnWidth(key: string, width: number): void {
@@ -230,6 +256,25 @@
         savePreferences();
     }
 
+    function saveToolbarHeight(): void {
+        savedViews = savedViews.map(view => view.id === activeViewId
+            ? { ...view, config: { ...view.config, toolbarHeight } } : view);
+        savePreferences();
+    }
+
+    function statusStyle(status: string): string { return `--status-color:${projectStatusColor(scope, status, ctx.columns)}`; }
+    function stageStatus(group: RowGroup): string { return stageStatuses.get(group.key) || ctx.columns[0] || 'Backlog'; }
+    function ancestorStatus(id: string): string {
+        return aggregateChecklistStatus(ctx.allTasks.filter(task => task.checklistAncestors?.some(ancestor => ancestor.id === id)), ctx.columns);
+    }
+
+    function changeGrouping(value: GroupField): void {
+        if (hasChecklistHierarchy && value === 'status') { groupBy = 'section'; stageGrouping = 'status'; }
+        else { groupBy = value; if (hasChecklistHierarchy) stageGrouping = 'none'; }
+        collapsed = new Set();
+        savePreferences();
+    }
+
     function applyConfig(config: ViewConfig): void {
         query = config.query || '';
         visible = new Set((config.visible || []).filter(field => fieldKeys.includes(field)));
@@ -244,6 +289,7 @@
         showSpentSum = config.showSpentSum === true;
         stageGrouping = config.stageGrouping || 'none';
         columnWidths = normalizeColumnWidths(config.columnWidths);
+        toolbarHeight = config.toolbarHeight ?? 44;
         selectedCells = new Set();
     }
 
@@ -270,6 +316,7 @@
         collapsedStageGroups = new Set();
         stageGrouping = 'none';
         columnWidths = {};
+        toolbarHeight = 44;
         stageGroupEditorOpen = false;
         savedViews = [];
         activeViewId = 'all';
@@ -314,7 +361,7 @@
         try {
             localStorage.setItem(prefKey(scope.id), JSON.stringify({
                 query, visible: [...visible], fieldOrder, hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-                sortRules, showEstimateSum, showSpentSum, stageGrouping, columnWidths, savedViews, activeViewId,
+                sortRules, showEstimateSum, showSpentSum, stageGrouping, columnWidths, toolbarHeight, savedViews, activeViewId,
                 collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks],
                 collapsedStageGroups: [...collapsedStageGroups]
             }));
@@ -506,14 +553,15 @@
     function makeGroups(tasks: ProjectTask[], _query: string, groupField: GroupField, sliceField: GroupField,
         selectedSlice: string, _sortRules: SortRule[], labels: typeof words): RowGroup[] {
         const filtered = tasks.filter(task => matchesQuery(task) &&
-            (sliceField === 'none' || !selectedSlice || groupValue(task, sliceField) === selectedSlice));
+            (sliceField === 'none' || !selectedSlice ||
+                (hasChecklistHierarchy && sliceField === 'status' ? stageStatuses.get(task.section || '') : groupValue(task, sliceField)) === selectedSlice));
         const byGroup = new Map<string, ProjectTask[]>();
         for (const task of filtered) {
             const key = groupValue(task, groupField);
             if (!byGroup.has(key)) byGroup.set(key, []);
             byGroup.get(key)!.push(task);
         }
-        if (!byGroup.size) byGroup.set(groupField === 'none' ? 'all' : groupField === 'status' ? (ctx.columns[0] || '') : '', []);
+        if (!byGroup.size && !hasChecklistHierarchy) byGroup.set(groupField === 'none' ? 'all' : groupField === 'status' ? (ctx.columns[0] || '') : '', []);
         const entries = [...byGroup.entries()];
         if (groupField === 'status') entries.sort((a, b) => ctx.columns.indexOf(a[0]) - ctx.columns.indexOf(b[0]));
         if (groupField === 'priority') entries.sort((a, b) =>
@@ -529,6 +577,14 @@
     function makeSliceOptions(tasks: ProjectTask[], _query: string, sliceField: GroupField, labels: typeof words): { key: string; label: string; count: number }[] {
         if (sliceField === 'none') return [];
         const counts = new Map<string, number>();
+        if (hasChecklistHierarchy && sliceField === 'status') {
+            for (const stage of collectTableStages(tasks.filter(matchesQuery))) {
+                const status = stageStatuses.get(stage.key) || ctx.columns[0] || 'Backlog';
+                counts.set(status, (counts.get(status) || 0) + 1);
+            }
+            return [...counts].sort(([a], [b]) => ctx.columns.indexOf(a) - ctx.columns.indexOf(b))
+                .map(([key, count]) => ({ key, label: key, count }));
+        }
         for (const task of tasks.filter(matchesQuery)) {
             const key = groupValue(task, sliceField);
             counts.set(key, (counts.get(key) || 0) + 1);
@@ -917,7 +973,7 @@
         <button on:click={() => $currentTab = 'timeline'}><span use:icon={'calendar-range'}></span>{lang === 'ru' ? 'Дорожная карта' : 'Roadmap'}</button>
         <button on:click={() => $currentTab = 'dashboard'}><span use:icon={'layout-dashboard'}></span>{lang === 'ru' ? 'Аналитика' : 'Insights'}</button>
     </nav>
-    <div class="table-toolbar">
+    <div class="table-toolbar" class:compact-toolbar={toolbarHeight <= 52} style={`height:${toolbarHeight}px`}>
         <label class="query-box">
             <span use:icon={'search'}></span>
             <input type="search" bind:value={query} on:input={savePreferences} placeholder={words.filter} aria-label={words.filter} />
@@ -932,36 +988,41 @@
         {/if}
         <div class="toolbar-actions">
             {#if hasSections}
-                <button class:active={stageGroupEditorOpen} on:click={openStageGroupEditor}><span use:icon={'folders'}></span>{lang === 'ru' ? 'Группы этапов' : 'Stage groups'}</button>
+                <button class:active={stageGroupEditorOpen} title={lang === 'ru' ? 'Группы этапов' : 'Stage groups'} aria-label={lang === 'ru' ? 'Группы этапов' : 'Stage groups'} on:click={openStageGroupEditor}><span use:icon={'folders'}></span><span class="action-label">{lang === 'ru' ? 'Группы этапов' : 'Stage groups'}</span></button>
             {/if}
             {#if scope.sourceType === 'file'}
-                <button on:click={openTaskIndex} title={lang === 'ru' ? 'Открыть список с датами выполнения и ссылками на заметки' : 'Open task list with completion times and note links'}><span use:icon={'file-text'}></span>{lang === 'ru' ? 'Список задач' : 'Task list'}</button>
+                <button on:click={openTaskIndex} aria-label={lang === 'ru' ? 'Список задач' : 'Task list'} title={lang === 'ru' ? 'Открыть список с датами выполнения и ссылками на заметки' : 'Open task list with completion times and note links'}><span use:icon={'file-text'}></span><span class="action-label">{lang === 'ru' ? 'Список задач' : 'Task list'}</span></button>
             {/if}
-            <button class:active={showArchive} on:click={() => showArchive = !showArchive}><span use:icon={'archive'}></span>{lang === 'ru' ? 'Архив' : 'Archive'} ({ctx.archivedTasks?.length || 0})</button>
-            <button class:active={viewMenuOpen} on:click={() => { viewMenuOpen = !viewMenuOpen; fieldMenuOpen = false; }}>
+            <button class:active={showArchive} title={`${lang === 'ru' ? 'Архив' : 'Archive'} (${ctx.archivedTasks?.length || 0})`} aria-label={lang === 'ru' ? 'Архив' : 'Archive'} on:click={() => showArchive = !showArchive}><span use:icon={'archive'}></span><span class="action-label">{lang === 'ru' ? 'Архив' : 'Archive'} ({ctx.archivedTasks?.length || 0})</span></button>
+            <button class:active={viewMenuOpen} title={words.view} aria-label={words.view} on:click={() => { viewMenuOpen = !viewMenuOpen; fieldMenuOpen = false; }}>
                 <span use:icon={'sliders-horizontal'}></span>{words.view}<span use:icon={'chevron-down'}></span>
             </button>
         </div>
     </div>
+    <div class="toolbar-resize" use:resizeToolbar role="slider" tabindex="0" aria-orientation="vertical" aria-label={lang === 'ru' ? 'Высота панели поиска и кнопок' : 'Search toolbar height'} aria-valuemin="40" aria-valuemax="180" aria-valuenow={toolbarHeight} aria-valuetext={`${toolbarHeight}px`}
+        title={lang === 'ru' ? 'Перетащите для изменения высоты. Двойной щелчок — компактный вид.' : 'Drag to resize height. Double-click for compact layout.'}
+        on:dblclick={() => { toolbarHeight = 44; saveToolbarHeight(); }}
+        on:keydown={(event) => { if (['ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) { event.preventDefault(); toolbarHeight = event.key === 'Home' ? 44 : Math.max(40, Math.min(180, toolbarHeight + (event.key === 'ArrowDown' ? 8 : -8))); saveToolbarHeight(); } }}></div>
 
     {#if viewMenuOpen}
         <button class="view-menu-dismiss" aria-label={lang === 'ru' ? 'Закрыть настройки вида' : 'Close view settings'} on:click={() => viewMenuOpen = false}></button>
-        <div class="view-menu" role="dialog" aria-label={words.view}>
+        <div class="view-menu" style={`top:${toolbarHeight + 42}px`} role="dialog" aria-label={words.view}>
             <div class="menu-title"><span>{words.view}</span><button title={lang === 'ru' ? 'Закрыть' : 'Close'} aria-label={lang === 'ru' ? 'Закрыть настройки вида' : 'Close view settings'} on:click={() => viewMenuOpen = false}><span use:icon={'x'}></span></button></div>
             <label class="rename-view">{lang === 'ru' ? 'Название' : 'Name'}
                 <input bind:value={renameViewName} on:change={renameActiveView} on:keydown={(event) => { if (event.key === 'Enter') renameActiveView(); }} />
             </label>
             <label><span use:icon={'group'}></span>{words.group}
-                <select bind:value={groupBy} disabled={hasChecklistHierarchy} title={hasChecklistHierarchy ? (lang === 'ru' ? 'Этапы закреплены для сохранения структуры задач' : 'Stages are fixed to preserve task hierarchy') : ''} on:change={() => { collapsed = new Set(); savePreferences(); }}>
-                    <option value="none">{words.none}</option>
+                <select value={hasChecklistHierarchy && stageGrouping === 'status' ? 'status' : groupBy} on:change={(event) => changeGrouping(event.currentTarget.value as GroupField)}>
+                    {#if !hasChecklistHierarchy}<option value="none">{words.none}</option>{/if}
                     {#if hasSections}<option value="section">{words.section}</option>{/if}
-                    <option value="status">{words.status}</option><option value="priority">{words.priority}</option><option value="habit">{words.habit}</option>
+                    <option value="status">{words.status}</option>{#if !hasChecklistHierarchy}<option value="priority">{words.priority}</option><option value="habit">{words.habit}</option>{/if}
                 </select>
             </label>
             {#if hasSections}
                 <label><span use:icon={'folders'}></span>{lang === 'ru' ? 'Над этапами' : 'Above stages'}
                     <select bind:value={stageGrouping} aria-label={lang === 'ru' ? 'Группировать этапы' : 'Group stages'} on:change={() => { groupBy = 'section'; savePreferences(); }}>
                         <option value="none">{words.none}</option>
+                        <option value="status">{words.status}</option>
                         <option value="local">{lang === 'ru' ? 'Группа этапов' : 'Stage group'}</option>
                         {#each stageGroupingFields as field (field.id)}<option value={`github:${field.name}`}>GitHub: {field.name}</option>{/each}
                     </select>
@@ -1000,6 +1061,7 @@
                 {/each}
             </div>
             <button class="reset-column-widths" on:click={() => { columnWidths = {}; saveColumnWidths(); }}>{lang === 'ru' ? 'Сбросить ширину колонок' : 'Reset column widths'}</button>
+            <label>{lang === 'ru' ? 'Высота панели' : 'Toolbar height'}<input type="range" min="40" max="180" step="1" bind:value={toolbarHeight} on:input={saveToolbarHeight} aria-label={lang === 'ru' ? 'Высота панели' : 'Toolbar height'} /><small>{toolbarHeight}px</small></label>
             {#if activeViewId !== 'all'}<button class="delete-view" on:click={() => { deleteActiveView(); viewMenuOpen = false; }}>{lang === 'ru' ? 'Удалить представление' : 'Delete view'}</button>{/if}
         </div>
     {/if}
@@ -1080,13 +1142,13 @@
                 <tbody>
                     {#each groups as group (group.key)}
                         {#if group.collection?.first}
-                            <tr class="stage-collection-row"><td colspan={shownFields.length + customFields.length + 3}>
+                            <tr class="stage-collection-row" style={group.collection.status ? statusStyle(group.collection.status) : ''}><td colspan={shownFields.length + customFields.length + 3}>
                                 <div class="stage-collection-content">
                                     <button class="group-toggle" title={group.collection.label} aria-label={group.collection.label}
                                         aria-expanded={!collapsedStageGroups.has(group.collection.key)} on:click={() => toggleStageGroup(group.collection!.key)}>
                                         <span use:icon={collapsedStageGroups.has(group.collection.key) ? 'chevron-right' : 'chevron-down'}></span>
                                     </button>
-                                    <span class="stage-collection-icon" use:icon={'folders'}></span>
+                                    <span class="stage-collection-icon" use:icon={group.collection.status ? 'circle-dot' : 'folders'}></span>
                                     <button class="stage-collection-title" on:click={() => toggleStageGroup(group.collection!.key)}>{group.collection.label}</button>
                                     <span class="group-count">{group.collection.stages} {lang === 'ru' ? 'этапов' : 'stages'}</span>
                                     <SubIssuesProgress done={group.collection.done} total={group.collection.stages} label={lang === 'ru' ? 'Выполнено этапов' : 'Completed stages'} />
@@ -1096,7 +1158,7 @@
                         {#if !group.collection || !collapsedStageGroups.has(group.collection.key)}
                         {#if groupBy !== 'none'}
                             {#if groupBy === 'section' && (group.key.startsWith('Этап ') || stageGrouping !== 'none')}
-                            <tr class="stage-row" on:dragover|preventDefault on:drop={() => dropTask(group)}>
+                            <tr class="stage-row" style={statusStyle(stageStatus(group))} on:dragover|preventDefault on:drop={() => dropTask(group)}>
                                 <td class="row-index"><span class="row-number">{group.key.match(/^Этап\s+(\d+)/)?.[1] || ''}</span></td>
                                 <td class="title-cell"><div class="stage-content">
                                     <button class="group-toggle" title={collapsed.has(group.key) ? (lang === 'ru' ? 'Развернуть этап' : 'Expand stage') : (lang === 'ru' ? 'Свернуть этап' : 'Collapse stage')}
@@ -1124,7 +1186,7 @@
                                 {#each shownFields as field (field)}
                                     <td class:field-status={field === 'status'}>
                                         {#if field === 'subIssues'}<SubIssuesProgress stretch done={hierarchy.stageProgress.get(group.key)?.done || 0} total={hierarchy.stageProgress.get(group.key)?.total || 0} label={words.subIssues} />
-                                        {:else if field === 'status'}<span class="status-pill">{hierarchy.stageProgress.get(group.key)?.done === hierarchy.stageProgress.get(group.key)?.total ? ctx.columns[ctx.columns.length - 1] : ctx.columns[0]}</span>
+                                        {:else if field === 'status'}<span class="status-pill">{stageStatus(group)}</span>
                                         {:else if field === 'section'}<span class="plain-value">{group.label}</span>
                                         {:else if field === 'estimate' && showEstimateSum}<span class="plain-value">{plugin.formatTime(group.estimate)}</span>
                                         {:else if field === 'spent' && showSpentSum}<span class="plain-value">{plugin.formatTime(group.spent)}</span>{/if}
@@ -1134,7 +1196,7 @@
                                 <td class="end-cell"></td>
                             </tr>
                             {:else}
-                            <tr class="group-row" on:dragover|preventDefault on:drop={() => dropTask(group)}><td colspan={shownFields.length + customFields.length + 3}>
+                            <tr class="group-row" style={groupBy === 'status' ? statusStyle(group.key) : ''} on:dragover|preventDefault on:drop={() => dropTask(group)}><td colspan={shownFields.length + customFields.length + 3}>
                                 <button class="group-toggle" title={group.label} aria-label={group.label} on:click={() => toggleGroup(group.key)} aria-expanded={!collapsed.has(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
                                 <span class:priority-high={groupBy === 'priority' && group.key === 'high'} class:priority-medium={groupBy === 'priority' && group.key === 'medium'} class:priority-low={groupBy === 'priority' && group.key === 'low'} class="group-dot"></span>
                                 <strong>{group.label}</strong>
@@ -1156,7 +1218,7 @@
                             {#each group.rows as task, index (task.id)}
                                 {#each task.checklistAncestors || [] as ancestor, depth (ancestor.id)}
                                     {#if (index === 0 || group.rows[index - 1]?.checklistAncestors?.[depth]?.id !== ancestor.id) && !task.checklistAncestors?.slice(0, depth).some(parent => collapsedParents.has(parent.id))}
-                                        <tr class="checklist-parent-row">
+                                        <tr class="checklist-parent-row" style={statusStyle(ancestorStatus(ancestor.id))}>
                                             <td class="row-index"></td>
                                             <td class="title-cell"><div class="checklist-parent-content" style={`padding-left: ${depth * 20}px`}>
                                                 <button class="group-toggle" title={collapsedParents.has(ancestor.id) ? (lang === 'ru' ? 'Развернуть' : 'Expand') : (lang === 'ru' ? 'Свернуть' : 'Collapse')}
@@ -1185,7 +1247,7 @@
                                             {#each shownFields as field (field)}
                                                 <td class:field-status={field === 'status'}>
                                                     {#if field === 'subIssues'}<SubIssuesProgress stretch done={hierarchy.groupProgress.get(ancestor.id)?.done || 0} total={hierarchy.groupProgress.get(ancestor.id)?.total || 0} label={words.subIssues} />
-                                                    {:else if field === 'status'}<span class="status-pill">{hierarchy.groupProgress.get(ancestor.id)?.done === hierarchy.groupProgress.get(ancestor.id)?.total ? ctx.columns[ctx.columns.length - 1] : ctx.columns[0]}</span>
+                                                    {:else if field === 'status'}<span class="status-pill">{ancestorStatus(ancestor.id)}</span>
                                                     {:else if field === 'section'}<span class="plain-value">{task.section}</span>{/if}
                                                 </td>
                                             {/each}
@@ -1203,7 +1265,7 @@
                                     {/if}
                                 {/each}
                                 {#if !hiddenTaskIds.has(task.id)}
-                                <tr class:selected={ctx.selectedTasks.has(task.id)} draggable={sortRules.length === 0} on:dragstart={() => draggedTask = task} on:dragend={() => draggedTask = null} on:dragover|preventDefault on:drop={() => void dropBefore(task, group)}>
+                                <tr style={statusStyle(task.status)} class:selected={ctx.selectedTasks.has(task.id)} draggable={sortRules.length === 0} on:dragstart={() => draggedTask = task} on:dragend={() => draggedTask = null} on:dragover|preventDefault on:drop={() => void dropBefore(task, group)}>
                                     <td class="row-index"><span class="row-number">{index + 1}</span><input type="checkbox" checked={ctx.selectedTasks.has(task.id)} aria-label={`${task.name}: ${words.selected}`} on:change={() => toggleSelect(task.id)} /></td>
                                     <td class="title-cell">
                                         <div class="title-inner" style={`padding-left: ${((task.checklistAncestors?.length || 0) + (hierarchy.taskDepth.get(task.id) || 0)) * 20}px`}>
@@ -1337,7 +1399,13 @@
     .saved-view-tabs input { align-self:center; width:160px; height:26px; padding:3px 6px; font-size:.75rem; }
     .saved-view-tabs .new-view { padding:5px 7px; }
     .view-tab-divider { align-self:center; width:1px; height:17px; margin:0 3px; background:var(--background-modifier-border); }
-    .table-toolbar { display:flex; align-items:center; gap:10px; flex:0 0 auto; min-height:48px; padding:7px 12px; border-bottom:1px solid var(--background-modifier-border); background:var(--background-primary); }
+    .table-toolbar { box-sizing:border-box; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:8px; flex:0 0 auto; min-height:40px; padding:4px 10px; background:var(--background-primary); overflow:auto; }
+    .toolbar-resize { display:block; flex:0 0 5px; width:100%; min-height:5px; height:5px; margin:0; padding:0; border:0; border-bottom:1px solid var(--background-modifier-border); border-radius:0; box-shadow:none; background:transparent; cursor:row-resize; touch-action:none; }
+    .toolbar-resize:hover, .toolbar-resize:focus-visible { background:var(--interactive-accent); }
+    .compact-toolbar { flex-wrap:nowrap; }
+    .compact-toolbar .toolbar-actions .action-label { display:none; }
+    .toolbar-actions .action-label { width:auto; height:auto; white-space:nowrap; color:inherit; }
+    .compact-toolbar .toolbar-actions button { padding:4px 7px; }
     .query-box { display:flex; align-items:center; gap:7px; flex:1; min-width:160px; height:32px; padding:0 9px; border:1px solid var(--background-modifier-border); border-radius:6px; background:var(--background-secondary); }
     .query-box:focus-within { border-color:var(--interactive-accent); box-shadow:0 0 0 1px var(--interactive-accent); }
     .query-box > span, .query-box button span, .toolbar-actions span { display:block; width:15px; height:15px; flex:none; color:var(--text-muted); }
@@ -1347,7 +1415,7 @@
     .view-changes { display:flex; align-items:center; gap:5px; }
     .view-changes button { min-height:28px; padding:3px 8px; font-size:.75rem; }
     .view-changes .save-view { background:var(--interactive-accent); color:var(--text-on-accent); }
-    .toolbar-actions { margin-left:auto; }
+    .toolbar-actions { display:flex; flex-direction:row; align-items:center; flex-wrap:nowrap; flex:none; gap:5px; margin-left:auto; }
     .toolbar-actions button { display:flex; align-items:center; gap:7px; min-height:30px; padding:4px 9px; border:1px solid var(--background-modifier-border); border-radius:6px; box-shadow:none; background:var(--background-primary); color:var(--text-normal); font-size:.81rem; }
     .toolbar-actions button:hover, .toolbar-actions button.active { background:var(--background-modifier-hover); }
     .view-menu-dismiss { position:absolute; z-index:29; inset:0; width:100%; height:100%; padding:0; border:0; border-radius:0; box-shadow:none; background:transparent; cursor:default; }
@@ -1476,7 +1544,9 @@
     .group-count, .group-sum { margin-left:8px; padding:2px 6px; border:1px solid var(--background-modifier-border); border-radius:9px; background:var(--background-primary); color:var(--text-muted); font-size:.68rem; }
     .group-sum { border-radius:4px; }
     .status-pill, .priority-pill { box-sizing:border-box; max-width:100%; min-width:0; height:24px; padding:2px 19px 2px 8px; border:1px solid var(--background-modifier-border); border-radius:12px; background:var(--background-secondary); color:var(--text-normal); font-size:.73rem; }
-    .status-pill { background:color-mix(in srgb, var(--interactive-accent) 11%, var(--background-primary)); }
+    .status-pill { color:var(--status-color,var(--text-normal)); border-color:color-mix(in srgb,var(--status-color,var(--interactive-accent)) 45%,transparent); background:color-mix(in srgb,var(--status-color,var(--interactive-accent)) 13%,var(--background-primary)); }
+    .stage-row .stage-icon, .stage-collection-row .stage-collection-icon, .task-icon, .checklist-parent-icon { color:var(--status-color,var(--interactive-accent)); }
+    .group-row .group-dot { border-color:var(--status-color,var(--interactive-accent)); }
     .priority-pill.high { background:color-mix(in srgb, var(--color-red) 13%, var(--background-primary)); }.priority-pill.medium { background:color-mix(in srgb, var(--color-yellow) 15%, var(--background-primary)); }.priority-pill.low { background:color-mix(in srgb, var(--color-blue) 13%, var(--background-primary)); }
     .cell-input { width:100%; min-width:0; height:25px; padding:2px 5px; border:1px solid transparent; border-radius:4px; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.76rem; }
     .cell-input:hover, .cell-input:focus { border-color:var(--background-modifier-border); background:var(--background-primary); }

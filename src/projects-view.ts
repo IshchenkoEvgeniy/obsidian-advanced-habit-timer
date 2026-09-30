@@ -12,6 +12,7 @@ import { projectTaskToData } from './projects/task-data';
 import { GitHubProjectsClient, parseGitHubProjectUrl, parseGitHubRepositoryUrl, type GitHubProjectSnapshot } from './projects/github-client';
 import { checklistChecks, checklistGroups, checklistMarker, remoteChecklistChecks, renderChecklistBody, replaceManagedChecklist } from './projects/checklist-sync';
 import { nativeChecklistMarker, nativeChecklistNodes } from './projects/native-checklist';
+import { aggregateChecklistStatus } from './projects/checklist-status';
 import { localStatusForRemote, localValues, planGitHubSync, remoteOptionForLocal, remoteValues, syncPlanSummary, type SyncedField } from './projects/github-sync';
 import {
     activeScopeId as activeScopeIdStore,
@@ -854,6 +855,7 @@ export class ProjectsView extends ItemView {
 
         const doneStatus = this.columns[this.columns.length - 1] || 'Done';
         const pulls: { line: number; checked?: boolean; status?: string; task: ProjectTask }[] = [];
+        const synchronizedStatuses = new Map<string, string>();
         const warnings: string[] = [];
         const issueIds = new Map<string, string>();
         const statusField = snapshot.fields.find(field => field.name === 'Status' && field.type === 'SINGLE_SELECT');
@@ -1035,7 +1037,6 @@ export class ProjectsView extends ItemView {
                     } else if (previous && localStatus === baseStatus && remoteStatus !== baseStatus ||
                         !previous && !createdNow && localStatus === firstStatus) {
                         finalStatus = remoteStatus;
-                        if (node.task.sourceLine !== undefined) pulls.push({ line: node.task.sourceLine, status: remoteStatus, task: node.task });
                     } else if (!previous && !createdNow && remoteStatus !== firstStatus) {
                         warnings.push(`Status differs on GitHub and Obsidian: ${node.title}`);
                         statusConflict = true;
@@ -1055,6 +1056,13 @@ export class ProjectsView extends ItemView {
                         nativeBinding.baseStatus = finalStatus;
                         bindingsUpdated = true;
                     }
+                }
+                // Parent aggregation below must use the result of this sync, including pulls.
+                if (!statusConflict) {
+                    if (node.task.status !== finalStatus && node.task.sourceLine !== undefined) {
+                        pulls.push({ line: node.task.sourceLine, status: finalStatus, task: node.task });
+                    }
+                    synchronizedStatuses.set(node.task.id, finalStatus);
                 }
                 const editableFields = snapshot.fields.filter(field => field.name !== 'Status' && field.name !== 'Этап' &&
                     ['TEXT', 'NUMBER', 'DATE', 'SINGLE_SELECT', 'MULTI_SELECT', 'ITERATION'].includes(field.type));
@@ -1134,18 +1142,38 @@ export class ProjectsView extends ItemView {
             await this.app.vault.modify(file, lines.join('\n'));
             changed += pulls.length;
         }
-        // Parent Issue state is independent of sub-issue progress on GitHub.
-        for (const node of nodes.filter(node => node.kind !== 'leaf')) {
-            const item = remoteById.get(scope.githubNativeItems[node.key]!.itemId);
-            if (item && statusField && !item.status) {
-                const targetStatus = item.issueState === 'CLOSED' ? doneStatus : (this.columns[0] || 'Backlog');
+        // GitHub does not propagate sub-issue completion to the parent Issue's Status.
+        // Keep stages and numbered groups consistent with the aggregate shown in Obsidian.
+        for (const node of [...nodes].reverse().filter(node => node.kind !== 'leaf')) {
+            const binding = scope.githubNativeItems[node.key]!;
+            const item = remoteById.get(binding.itemId);
+            if (!item) continue;
+            const descendants = tasks.filter(task => node.kind === 'stage'
+                ? task.section === node.stage
+                : task.checklistAncestors?.some(ancestor => `group:${ancestor.id}` === node.key));
+            const targetStatus = aggregateChecklistStatus(descendants.map(task => ({ ...task,
+                status: synchronizedStatuses.get(task.id) ?? task.status })), this.columns);
+            const targetClosed = targetStatus === doneStatus;
+            if ((item.issueState === 'CLOSED') !== targetClosed) {
+                await client.setIssueClosed(item.contentId, targetClosed);
+                item.issueState = targetClosed ? 'CLOSED' : 'OPEN';
+                changed++;
+            }
+            if (statusField && localStatusForRemote(scope, item.status) !== targetStatus) {
                 const option = remoteOptionForLocal(targetStatus, statusField.options || []);
                 if (option) {
                     await client.updateStatus(snapshot.id, item.id, statusField.id, option);
                     item.status = statusField.options?.find(value => value.id === option)?.name || targetStatus;
                     item.fields.Status = item.status;
                     changed++;
-                }
+                } else warnings.push(`No matching GitHub Status option: ${targetStatus} (${node.title})`);
+            }
+            const meta = { fields: { ...item.fields }, assignees: item.assignees, subIssues: item.subIssues };
+            if (binding.baseClosed !== targetClosed || binding.baseStatus !== targetStatus || JSON.stringify(binding.meta) !== JSON.stringify(meta)) {
+                binding.baseClosed = targetClosed;
+                if (!statusField || localStatusForRemote(scope, item.status) === targetStatus) binding.baseStatus = targetStatus;
+                binding.meta = meta;
+                bindingsUpdated = true;
             }
         }
         if (bindingsUpdated) await this.plugin.saveSettings();

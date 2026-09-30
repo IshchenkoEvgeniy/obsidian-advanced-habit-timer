@@ -7,7 +7,7 @@ export type GroupField = 'none' | 'section' | 'status' | 'priority' | 'habit';
 export type SortRule = { field: Field | 'title'; direction: 1 | -1 };
 export type ViewConfig = { query: string; visible: Field[]; fieldOrder: Field[]; hiddenGitHub?: string[];
     groupBy: GroupField; sliceBy: GroupField; sliceValue: string; sortRules: SortRule[];
-    showEstimateSum: boolean; showSpentSum: boolean; stageGrouping?: StageGrouping; columnWidths?: ColumnWidths };
+    showEstimateSum: boolean; showSpentSum: boolean; stageGrouping?: StageGrouping; columnWidths?: ColumnWidths; toolbarHeight?: number };
 export type SavedView = { id: string; name: string; config: ViewConfig };
 
 const isField = (key: unknown): key is Field => fieldKeys.includes(key as Field);
@@ -20,7 +20,7 @@ function isSortRule(value: unknown): value is SortRule {
 }
 
 export function hasCurrentTableViewConfig(saved: Record<string, unknown>): boolean {
-    return Array.isArray(saved.visible) || typeof saved.query === 'string' || Array.isArray(saved.fieldOrder) || Boolean(saved.columnWidths);
+    return Array.isArray(saved.visible) || typeof saved.query === 'string' || Array.isArray(saved.fieldOrder) || Boolean(saved.columnWidths) || typeof saved.toolbarHeight === 'number';
 }
 
 /** Read old preferences without letting an older saved-view baseline replace the current draft. */
@@ -40,7 +40,9 @@ export function normalizeTableViewConfig(input: unknown, fallback: ViewConfig): 
         showEstimateSum: typeof saved.showEstimateSum === 'boolean' ? saved.showEstimateSum : fallback.showEstimateSum,
         showSpentSum: typeof saved.showSpentSum === 'boolean' ? saved.showSpentSum : fallback.showSpentSum,
         columnWidths: normalizeColumnWidths(saved.columnWidths),
-        stageGrouping: stageGrouping === 'none' || stageGrouping === 'local' ||
+        toolbarHeight: typeof saved.toolbarHeight === 'number' && Number.isFinite(saved.toolbarHeight)
+            ? Math.max(40, Math.min(180, Math.round(saved.toolbarHeight))) : 44,
+        stageGrouping: stageGrouping === 'none' || stageGrouping === 'local' || stageGrouping === 'status' ||
             typeof stageGrouping === 'string' && stageGrouping.startsWith('github:') && stageGrouping.length > 7
             ? stageGrouping as StageGrouping : fallback.stageGrouping || 'none'
     };
