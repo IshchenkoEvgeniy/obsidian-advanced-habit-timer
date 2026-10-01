@@ -10,6 +10,9 @@ import { defaultDailyGoal, defaultDailyGoalUnit } from './library/daily-goals';
 import type { HabitTimerSettings } from './types';
 import { normalizeAliases } from './library/property-schema';
 import { TimerView, VIEW_TYPE_TIMER } from './timer/timer-view';
+import type { MusicPlayer } from './timer/music-player';
+import type { TimerEngine } from './timer/timer-engine';
+import { FloatingTimer } from './timer/floating-timer';
 import { HabitTimerSettingTab } from './settings/settings-tab';
 import { TelegramService } from './services/telegram-service';
 import { calculateHabitStreak } from './services/habit-service';
@@ -45,6 +48,9 @@ export default class HabitTimerPlugin extends Plugin {
     projectEngine: ProjectDataEngine;
     projectSourceRename: Promise<void> = Promise.resolve();
     timerSessions: TimerSessionService;
+    persistentMusicPlayer?: MusicPlayer;
+    persistentTimerEngine?: TimerEngine;
+    private floatingTimer?: FloatingTimer;
     dashboardApiBridge: DashboardApiBridge;
     private currentThemeClass: string = '';
     /** Pending deferred-startup timeout (heavy/network activity after layout settle). */
@@ -103,6 +109,8 @@ export default class HabitTimerPlugin extends Plugin {
 
         this.statusBarItem = this.addStatusBarItem();
         this.updateStatusBar(0);
+        this.floatingTimer = new FloatingTimer(this);
+        this.floatingTimer.mount();
 
         this.addSettingTab(new HabitTimerSettingTab(this.app, this));
 
@@ -264,7 +272,8 @@ export default class HabitTimerPlugin extends Plugin {
                 viewAlreadyOpen &&
                 viewType === VIEW_TYPE_TIMER &&
                 this.settings.activeTimer &&
-                leaf.view instanceof TimerView
+                leaf.view instanceof TimerView &&
+                !leaf.view.engine.isTicking()
             ) {
                 await leaf.view.recoverActiveTimer();
             }
@@ -565,9 +574,10 @@ export default class HabitTimerPlugin extends Plugin {
 
     async pauseTimerSession(): Promise<boolean> {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_TIMER)[0]?.view;
-        if (view instanceof TimerView) {
+        const engine = view instanceof TimerView ? view.engine : this.persistentTimerEngine;
+        if (engine) {
             if (!this.settings.activeTimer) return false;
-            await view.engine.pause();
+            await engine.pause();
             return true;
         }
         return this.timerSessions.pause();
@@ -575,9 +585,10 @@ export default class HabitTimerPlugin extends Plugin {
 
     async resumeTimerSession(): Promise<boolean> {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_TIMER)[0]?.view;
-        if (view instanceof TimerView) {
+        const engine = view instanceof TimerView ? view.engine : this.persistentTimerEngine;
+        if (engine) {
             if (!this.settings.activeTimer) return false;
-            await view.engine.start();
+            await engine.start();
             return true;
         }
         return this.timerSessions.resume();
@@ -589,7 +600,7 @@ export default class HabitTimerPlugin extends Plugin {
 
     async finishTimerSession(input: FinishTimerInput = {}): Promise<boolean> {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_TIMER)[0]?.view;
-        if (view instanceof TimerView) view.engine.suspend();
+        (view instanceof TimerView ? view.engine : this.persistentTimerEngine)?.suspend();
         const result = await this.timerSessions.finish(input);
         if (view instanceof TimerView && result) await view.refresh();
         return Boolean(result);
@@ -597,9 +608,10 @@ export default class HabitTimerPlugin extends Plugin {
 
     async cancelTimerSession(): Promise<boolean> {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_TIMER)[0]?.view;
-        if (view instanceof TimerView) {
+        const engine = view instanceof TimerView ? view.engine : this.persistentTimerEngine;
+        if (engine) {
             if (!this.settings.activeTimer) return false;
-            await view.engine.reset();
+            await engine.reset();
             return true;
         }
         return this.timerSessions.cancel();
@@ -614,6 +626,9 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     onunload() {
+        this.floatingTimer?.destroy();
+        this.persistentTimerEngine?.suspend();
+        this.persistentMusicPlayer?.destroy();
         if (this.deferredStartupTimer !== null) {
             // Отложенный старт не успел выполниться: чистим таймер и не дёргаем
             // stop() у ещё не запущенного dashboard bridge (без ложного UNAVAILABLE).

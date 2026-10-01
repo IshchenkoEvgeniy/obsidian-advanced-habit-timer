@@ -179,22 +179,24 @@ export class TelegramTimerController {
     }
 
     private async suspendOpenView(): Promise<void> {
-        this.getOpenView()?.engine.suspend();
+        (this.getOpenView()?.engine || this.plugin.persistentTimerEngine)?.suspend();
     }
 
     private async syncOpenView(): Promise<void> {
         const view = this.getOpenView();
-        if (!view) return;
-        view.engine.suspend();
-        await view.engine.recoverActiveTimer(true);
-        await view.refresh();
+        const engine = view?.engine || this.plugin.persistentTimerEngine;
+        if (!engine) return;
+        engine.suspend();
+        await engine.recoverActiveTimer(true);
+        if (view) await view.refresh();
     }
 
     private async resetOpenView(): Promise<void> {
         const view = this.getOpenView();
-        if (!view) return;
-        await view.engine.reset();
-        await view.refresh();
+        const engine = view?.engine || this.plugin.persistentTimerEngine;
+        if (!engine) return;
+        await engine.reset();
+        if (view) await view.refresh();
     }
 
     private escapeCell(value: string): string {

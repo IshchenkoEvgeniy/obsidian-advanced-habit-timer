@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onDestroy, onMount } from 'svelte';
     import { setIcon } from 'obsidian';
     import type { App, TFile } from 'obsidian';
     import type { Action } from 'svelte/action';
@@ -106,10 +106,10 @@
 
     onMount(() => {
         if (musicContainer && view.musicPlayer) {
-            musicContainer.empty();
-            view.musicPlayer.render(musicContainer);
+            view.musicPlayer.attach(musicContainer);
         }
     });
+    onDestroy(() => view.musicPlayer?.detach(musicContainer));
 
     $: {
         if (hmContainer && $pastHistory && $baseSecondsToday !== undefined) {

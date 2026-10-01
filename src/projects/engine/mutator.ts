@@ -105,6 +105,7 @@ export class ProjectMutator {
 
             if (taskLineIdx !== -1) {
                 const blockId = blockIdFromTaskLine(lines[taskLineIdx]!) || newTaskBlockId(content);
+                const githubMarker = lines[taskLineIdx]!.match(/<!-- github-project-item: [^>]+ -->/)?.[0];
                 const archiveStr = lines[taskLineIdx]!.includes('<!-- project-archived -->') ? ' <!-- project-archived -->' : '';
                 let markers = "";
                 if (data.timeEstimated) markers += ` ⏳ ${data.timeEstimated}`;
@@ -129,9 +130,9 @@ export class ProjectMutator {
 
                 const isSectionDone = data.section && (isDone(data.status) || data.status === columns?.[columns.length - 1]);
                 const box = data.section ? (isSectionDone ? '[x]' : '[ ]') : (taskChecked ? '[x]' : '[ ]');
-                const inlineStatus = data.section && data.status !== columns?.[0] && !isSectionDone
+                const inlineStatus = data.section && (data.status !== columns?.[0] || githubMarker) && !isSectionDone
                     ? ` <!-- project-status: ${data.status.replace(/-->/g, '')} -->` : '';
-                lines[taskLineIdx] = `${taskIndent}- ${box} ${data.name}${markers}${pIcon}${spentStr}${inlineStatus}${archiveStr} ^${blockId}`;
+                lines[taskLineIdx] = `${taskIndent}- ${box} ${data.name}${markers}${pIcon}${spentStr}${inlineStatus}${archiveStr}${githubMarker ? ` ${githubMarker}` : ''} ^${blockId}`;
 
                 let currentLineStatus = columns ? columns[0] : 'Backlog';
                 for (let j = 0; j < taskLineIdx; j++) {

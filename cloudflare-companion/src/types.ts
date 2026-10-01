@@ -199,6 +199,7 @@ export interface TelegramCallbackQuery { id: string; data?: string; message?: Te
 export interface TelegramUpdate { update_id: number; message?: TelegramMessage; callback_query?: TelegramCallbackQuery; }
 
 export interface SyncPushBody {
+  reconcileCounts?: boolean;
   boardTasks?: import('./project-board').BoardTask[];
   projectScopes?: import('./project-board').BoardScope[];
   chatId: string;

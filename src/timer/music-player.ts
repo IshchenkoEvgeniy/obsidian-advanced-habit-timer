@@ -17,6 +17,22 @@ export class MusicPlayer {
     private shuffledIndices: number[] = [];
     private shuffleCursor: number = 0;
     private currentMusicFolder: string = '';
+    private currentStreamUrl = '';
+    private sourceKind: 'none' | 'youtube' | 'stream' | 'folder' = 'none';
+    private youtubeShouldPlay = false;
+    private hostEl: HTMLElement | null = null;
+    private anchorEl: HTMLElement | null = null;
+    private anchorObserver: ResizeObserver | null = null;
+    private detailsObserver: MutationObserver | null = null;
+    private attachedWindow: Window | null = null;
+    private positionFrame = 0;
+    private readonly schedulePosition = () => {
+        if (this.positionFrame) return;
+        this.positionFrame = (this.attachedWindow || window).requestAnimationFrame(() => {
+            this.positionFrame = 0;
+            this.positionAtAnchor();
+        });
+    };
 
     iframeEl!: HTMLIFrameElement;
 
@@ -29,6 +45,8 @@ export class MusicPlayer {
     playlistContainer!: HTMLElement;
     playlistToggleBtn!: HTMLButtonElement;
     trackListEl!: HTMLElement;
+    private musicCont!: HTMLElement;
+    private nextBtn!: HTMLButtonElement;
 
     constructor(private app: App, private plugin: HabitTimerPlugin) {
         if (!this.audioPlayer) {
@@ -42,16 +60,112 @@ export class MusicPlayer {
         }
     }
 
+    /** Keep the iframe in one DOM node for the whole plugin lifetime. Recreating it stops YouTube playback. */
+    ensureRendered(doc: Document = document): void {
+        if (this.hostEl) return;
+        this.hostEl = doc.body.createDiv({ cls: 'fl-persistent-music-player' });
+        this.hostEl.setAttribute('aria-hidden', 'true');
+        this.render(this.hostEl);
+    }
+
+    attach(anchor: HTMLElement): void {
+        this.ensureRendered(anchor.ownerDocument);
+        this.detach();
+        if (this.hostEl!.ownerDocument !== anchor.ownerDocument) anchor.ownerDocument.body.appendChild(this.hostEl!);
+        this.anchorEl = anchor;
+        this.attachedWindow = anchor.ownerDocument.defaultView;
+        this.anchorObserver = new ResizeObserver(this.schedulePosition);
+        this.anchorObserver.observe(anchor);
+        this.anchorObserver.observe(this.hostEl!);
+        const details = anchor.closest('details');
+        if (details) {
+            this.detailsObserver = new MutationObserver(this.schedulePosition);
+            this.detailsObserver.observe(details, { attributes: true, attributeFilter: ['open'] });
+        }
+        this.attachedWindow?.addEventListener('scroll', this.schedulePosition, true);
+        this.attachedWindow?.addEventListener('resize', this.schedulePosition);
+        this.schedulePosition();
+    }
+
+    detach(anchor?: HTMLElement): void {
+        if (anchor && this.anchorEl !== anchor) return;
+        this.anchorEl = null;
+        this.anchorObserver?.disconnect();
+        this.anchorObserver = null;
+        this.detailsObserver?.disconnect();
+        this.detailsObserver = null;
+        this.attachedWindow?.removeEventListener('scroll', this.schedulePosition, true);
+        this.attachedWindow?.removeEventListener('resize', this.schedulePosition);
+        if (this.positionFrame) (this.attachedWindow || window).cancelAnimationFrame(this.positionFrame);
+        this.positionFrame = 0;
+        this.attachedWindow = null;
+        this.hideHost();
+    }
+
+    destroy(): void {
+        this.detach();
+        this.pause();
+        this.audioPlayer.src = '';
+        if (this.iframeEl) this.iframeEl.src = 'about:blank';
+        this.hostEl?.remove();
+        this.hostEl = null;
+    }
+
+    private positionAtAnchor(): void {
+        if (!this.hostEl || !this.anchorEl) return;
+        const details = this.anchorEl.closest('details');
+        if (details && !details.open) {
+            this.hideHost();
+            return;
+        }
+        const rect = this.anchorEl.getBoundingClientRect();
+        if (!rect.width || !this.anchorEl.isConnected) {
+            this.hideHost();
+            return;
+        }
+        const styles = this.anchorEl.ownerDocument.defaultView?.getComputedStyle(this.anchorEl);
+        const leftPadding = parseFloat(styles?.paddingLeft || '0') || 0;
+        const rightPadding = parseFloat(styles?.paddingRight || '0') || 0;
+        const topPadding = parseFloat(styles?.paddingTop || '0') || 0;
+        const bottomPadding = parseFloat(styles?.paddingBottom || '0') || 0;
+        this.hostEl.style.width = `${Math.max(200, rect.width - leftPadding - rightPadding)}px`;
+        const height = Math.ceil(this.hostEl.getBoundingClientRect().height);
+        const reservedHeight = height + topPadding + bottomPadding;
+        if (height && this.anchorEl.style.minHeight !== `${reservedHeight}px`) this.anchorEl.style.minHeight = `${reservedHeight}px`;
+        const top = rect.top + topPadding;
+        const viewport = this.anchorEl.closest('.view-content')?.getBoundingClientRect();
+        if (viewport && (top + height <= viewport.top || top >= viewport.bottom)) {
+            this.hideHost();
+            return;
+        }
+        this.hostEl.style.clipPath = viewport
+            ? `inset(${Math.max(0, viewport.top - top)}px 0 ${Math.max(0, top + height - viewport.bottom)}px 0)`
+            : '';
+        this.hostEl.style.left = `${rect.left + leftPadding}px`;
+        this.hostEl.style.top = `${top}px`;
+        this.hostEl.addClass('is-visible');
+        this.hostEl.setAttribute('aria-hidden', 'false');
+    }
+
+    private hideHost(): void {
+        if (!this.hostEl) return;
+        this.hostEl.removeClass('is-visible');
+        this.hostEl.style.left = '-10000px';
+        this.hostEl.style.top = '0px';
+        this.hostEl.setAttribute('aria-hidden', 'true');
+    }
+
     /** Render the full music player UI into the given container element. */
     render(container: HTMLElement): void {
         const lang = this.plugin.settings.language;
         container.createEl('label', { text: t(lang, 'music_player_label'), cls: 'tui-label' });
         const musicCont = container.createDiv({ cls: 'music-player-container' });
+        this.musicCont = musicCont;
 
-        const sourceCont = musicCont.createDiv({ attr: { style: 'display: flex; gap: 5px; margin-bottom: 10px; align-items: center;' } });
-        const sourceDropdown = sourceCont.createEl('select', { cls: 'dropdown', attr: { style: 'flex: 1;' } });
-        const streamInput = sourceCont.createEl('input', { type: 'text', placeholder: 'YouTube / Audio URL...', attr: { style: 'flex: 1; display: none;' } });
-        const applyBtn = sourceCont.createEl('button', { text: 'Load', cls: 'music-btn', attr: { style: 'padding: 4px 8px; font-size: 0.8em;' } });
+        const sourceCont = musicCont.createDiv({ cls: 'music-source-row' });
+        const sourceDropdown = sourceCont.createEl('select', { cls: 'dropdown' });
+        const streamInput = sourceCont.createEl('input', { type: 'text', cls: 'music-url-input', placeholder: 'YouTube / Audio URL...' });
+        const applyBtn = sourceCont.createEl('button', { text: 'Load', cls: 'music-btn music-load-btn' });
 
         sourceDropdown.createEl('option', { text: '-- No Music --', value: 'none' });
         sourceDropdown.createEl('option', { text: '🌐 URL (Stream)', value: 'stream' });
@@ -71,26 +185,22 @@ export class MusicPlayer {
         if (currentSrc.startsWith('url:')) {
             sourceDropdown.value = 'stream';
             streamInput.value = currentSrc.substring(4);
-            streamInput.setCssStyles({ display: 'block' });
         } else if (currentSrc.startsWith('folder:')) {
             sourceDropdown.value = currentSrc;
         }
 
-        sourceDropdown.onchange = () => {
-            if (sourceDropdown.value === 'stream') {
-                streamInput.setCssStyles({ display: 'block' });
-            } else {
-                streamInput.setCssStyles({ display: 'none' });
-            }
-        };
+        const updateSourceRow = () => sourceCont.toggleClass('has-url', sourceDropdown.value === 'stream');
+        sourceDropdown.onchange = updateSourceRow;
+        updateSourceRow();
 
         applyBtn.onclick = async () => {
+            const url = streamInput.value.trim();
+            if (sourceDropdown.value === 'stream' && !url) return;
             if (sourceDropdown.value === 'none') {
                 this.plugin.settings.activeMusicSource = 'none';
                 this.plugin.settings.globalMusicStreamUrl = '';
                 this.clearFolder();
             } else if (sourceDropdown.value === 'stream') {
-                const url = streamInput.value.trim();
                 this.plugin.settings.activeMusicSource = `url:${url}`;
                 this.plugin.settings.globalMusicStreamUrl = url;
                 this.loadFolder('stream');
@@ -104,11 +214,19 @@ export class MusicPlayer {
         };
 
         this.iframeEl = musicCont.createEl('iframe', {
-            attr: { style: 'display: none; width: 100%; height: 100px; border: none; border-radius: 8px; margin-bottom: 10px;', allow: 'autoplay' }
+            cls: 'music-youtube-frame',
+            attr: { title: 'YouTube music player', allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: 'true' }
         });
+        this.iframeEl.style.display = 'none';
+        this.iframeEl.onload = () => {
+            if (this.sourceKind === 'youtube' && this.youtubeShouldPlay) this.youtubeCommand('playVideo');
+        };
+        musicCont.createDiv({ cls: 'music-youtube-hint', text: lang === 'ru'
+            ? 'Управление воспроизведением и громкостью — в видео YouTube.'
+            : 'Use the controls inside the YouTube video.' });
 
-        this.audioPlayer.onplay = () => { if (this.playPauseBtn && !this.plugin.settings.globalMusicStreamUrl?.includes('youtu')) this.playPauseBtn.textContent = '⏸ Pause'; };
-        this.audioPlayer.onpause = () => { if (this.playPauseBtn && !this.plugin.settings.globalMusicStreamUrl?.includes('youtu')) this.playPauseBtn.textContent = '▶ Play'; };
+        this.audioPlayer.onplay = () => { if (this.playPauseBtn) this.playPauseBtn.textContent = '⏸ Pause'; };
+        this.audioPlayer.onpause = () => { if (this.playPauseBtn) this.playPauseBtn.textContent = '▶ Play'; };
 
         const infoCont = musicCont.createDiv({ cls: 'music-info-container' });
         this.musicStatusEl = infoCont.createDiv({ cls: 'music-status', text: 'No music folder selected' });
@@ -119,6 +237,7 @@ export class MusicPlayer {
         this.volumeSlider = musicCtrls.createEl('input', { type: 'range' });
         this.volumeSlider.min = '0'; this.volumeSlider.max = '1'; this.volumeSlider.step = '0.05';
         this.volumeSlider.value = String(this.audioPlayer.volume);
+        this.volumeSlider.setAttribute('aria-label', lang === 'ru' ? 'Громкость' : 'Volume');
         this.volumeSlider.oninput = () => { this.audioPlayer.volume = parseFloat(this.volumeSlider.value); };
 
         this.modeBtn = musicCtrls.createEl('button', {
@@ -136,18 +255,7 @@ export class MusicPlayer {
             cls: 'music-btn'
         });
         this.playPauseBtn.onclick = () => {
-            const streamUrl = this.plugin.settings.globalMusicStreamUrl;
-            if (streamUrl && (streamUrl.includes('youtu.be') || streamUrl.includes('youtube.com'))) {
-                if (this.iframeEl.src.includes('autoplay=0')) {
-                    this.iframeEl.src = this.iframeEl.src.replace('autoplay=0', 'autoplay=1');
-                    this.playPauseBtn.textContent = '⏸ Pause';
-                } else {
-                    this.iframeEl.src = this.iframeEl.src.replace('autoplay=1', 'autoplay=0');
-                    this.playPauseBtn.textContent = '▶ Play';
-                }
-                return;
-            }
-
+            if (this.sourceKind === 'youtube' || this.sourceKind === 'none') return;
             if (this.audioPlayer.paused) {
                 const currentSrc = this.audioPlayer.src;
                 if ((!currentSrc || currentSrc.endsWith('/') || this.audioPlayer.readyState === 0) && this.playlistFiles.length > 0) {
@@ -164,11 +272,12 @@ export class MusicPlayer {
             }
         };
 
-        const nextBtn = musicCtrls.createEl('button', { text: '⏭ Next', cls: 'music-btn' });
-        nextBtn.onclick = () => this.next(true);
+        this.nextBtn = musicCtrls.createEl('button', { text: '⏭ Next', cls: 'music-btn music-folder-only' });
+        this.nextBtn.onclick = () => this.next(true);
+        this.modeBtn.addClass('music-folder-only');
 
         this.playlistToggleBtn = musicCtrls.createEl('button', {
-            text: '☰', cls: 'music-btn',
+            text: '☰', cls: 'music-btn music-folder-only',
             attr: { title: t(lang, 'track_list_toggle') }
         });
         this.playlistToggleBtn.onclick = () => {
@@ -191,104 +300,126 @@ export class MusicPlayer {
         }
     }
 
-    /** Load a music folder path; skips reload if already loaded. */
+    private youtubeId(raw: string): string | null {
+        try {
+            const url = new URL(raw);
+            const host = url.hostname.toLowerCase();
+            const id = host === 'youtu.be' ? url.pathname.slice(1).split('/')[0]
+                : host === 'youtube.com' || host.endsWith('.youtube.com')
+                    ? url.searchParams.get('v') || url.pathname.match(/^\/(?:live|shorts|embed)\/([^/]+)/)?.[1]
+                    : null;
+            return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+        } catch { return null; }
+    }
+
+    private updateSourceAppearance(): void {
+        if (!this.musicCont) return;
+        this.musicCont.classList.toggle('is-youtube', this.sourceKind === 'youtube');
+        this.musicCont.classList.toggle('is-stream', this.sourceKind === 'stream');
+        this.musicCont.classList.toggle('is-folder', this.sourceKind === 'folder');
+        this.musicCont.classList.toggle('is-none', this.sourceKind === 'none');
+        if (this.playPauseBtn) this.playPauseBtn.disabled = this.sourceKind === 'none' || (this.sourceKind === 'folder' && !this.playlistFiles.length);
+        if (this.nextBtn) this.nextBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
+        if (this.modeBtn) this.modeBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
+        if (this.playlistToggleBtn) this.playlistToggleBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
+        if (this.playlistContainer && this.sourceKind !== 'folder') this.playlistContainer.style.display = 'none';
+    }
+
+    private stopCurrentPlayback(): void {
+        this.audioPlayer.pause();
+        this.audioPlayer.removeAttribute('src');
+        this.audioPlayer.load();
+        if (this.iframeEl) {
+            this.iframeEl.style.display = 'none';
+            if (this.iframeEl.src && this.iframeEl.src !== 'about:blank') this.iframeEl.src = 'about:blank';
+        }
+        this.currentMusicFolder = '';
+        this.currentStreamUrl = '';
+        this.youtubeShouldPlay = false;
+        this.playlistFiles = [];
+        this.sourceKind = 'none';
+        if (this.musicTimeEl) this.musicTimeEl.textContent = '00:00 / 00:00';
+        if (this.playPauseBtn) this.playPauseBtn.textContent = '▶ Play';
+        this.updateSourceAppearance();
+    }
+
+    /** Load a source without reloading it when the timer view is opened again. */
     loadFolder(folderPath: string): void {
         const streamUrl = this.plugin.settings.globalMusicStreamUrl;
         if (streamUrl) {
-            this.currentMusicFolder = 'stream';
-            this.playlistFiles = [];
-            
-            if (streamUrl.includes('youtube.com') || streamUrl.includes('youtu.be')) {
-                this.iframeEl.setCssStyles({ display: 'block' });
-                let videoId = '';
-                if (streamUrl.includes('v=')) {
-                    const parts = streamUrl.split('v=');
-                    if (parts[1]) videoId = parts[1].split('&')[0] || '';
-                } else if (streamUrl.includes('youtu.be/')) {
-                    const parts = streamUrl.split('youtu.be/');
-                    if (parts[1]) videoId = parts[1].split('?')[0] || '';
+            const videoId = this.youtubeId(streamUrl);
+            const kind = videoId ? 'youtube' : 'stream';
+            if (this.sourceKind !== kind || this.currentStreamUrl !== streamUrl) {
+                this.stopCurrentPlayback();
+                this.sourceKind = kind;
+                this.currentStreamUrl = streamUrl;
+                if (videoId) {
+                    const origin = this.iframeEl.ownerDocument.defaultView?.location.origin;
+                    const params = new URLSearchParams({ enablejsapi: '1', autoplay: '0', controls: '1' });
+                    if (origin?.startsWith('http://') || origin?.startsWith('https://')) params.set('origin', origin);
+                    this.iframeEl.src = `https://www.youtube.com/embed/${videoId}?${params}`;
+                    this.iframeEl.style.display = 'block';
+                } else {
+                    this.audioPlayer.src = streamUrl;
                 }
-                
-                if (videoId && !this.iframeEl.src.includes(videoId)) {
-                    this.iframeEl.src = `https://www.youtube.com/embed/${videoId}?autoplay=0`;
-                }
-                if (this.musicStatusEl) this.musicStatusEl.textContent = '📺 YouTube Stream';
-            } else {
-                this.iframeEl.setCssStyles({ display: 'none' });
-                this.audioPlayer.src = streamUrl;
-                if (this.musicStatusEl) this.musicStatusEl.textContent = '📻 Audio Stream';
             }
+            this.musicStatusEl.textContent = videoId ? '📺 YouTube Stream' : '📻 Audio Stream';
+            this.updateSourceAppearance();
             return;
         }
 
-        this.iframeEl.setCssStyles({ display: 'none' });
-
-        if (this.currentMusicFolder === folderPath) {
-            if (this.musicStatusEl) this.musicStatusEl.textContent = t(this.plugin.settings.language, 'loaded_tracks', this.playlistFiles.length);
-            return;
-        }
+        if (this.sourceKind === 'folder' && this.currentMusicFolder === folderPath) return;
+        this.stopCurrentPlayback();
+        this.sourceKind = 'folder';
         this.currentMusicFolder = folderPath;
-        const allFiles = this.app.vault.getFiles();
-        const audioFiles = allFiles.filter(f =>
-            f.path.startsWith(folderPath) && ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(f.extension)
+        const audioFiles = this.app.vault.getFiles().filter(file =>
+            file.path.startsWith(`${folderPath}/`) && ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(file.extension)
         );
-
-        if (audioFiles.length > 0) {
-            this.playlistFiles = audioFiles.map(f => ({ path: this.app.vault.getResourcePath(f), name: f.basename }));
-            this.generateShuffle();
-            this.currentTrackIndex = 0;
-            if (this.musicStatusEl) this.musicStatusEl.textContent = t(this.plugin.settings.language, 'loaded_tracks', this.playlistFiles.length);
-            if (this.audioPlayer.paused) {
-                this.audioPlayer.src = '';
-                if (this.musicTimeEl) this.musicTimeEl.textContent = '00:00 / 00:00';
-            }
-        } else {
-            this.playlistFiles = [];
-            if (this.musicStatusEl) this.musicStatusEl.textContent = t(this.plugin.settings.language, 'no_audio_files', folderPath);
-        }
+        this.playlistFiles = audioFiles.map(file => ({ path: this.app.vault.getResourcePath(file), name: file.basename }));
+        this.generateShuffle();
+        this.currentTrackIndex = 0;
+        this.musicStatusEl.textContent = audioFiles.length
+            ? t(this.plugin.settings.language, 'loaded_tracks', audioFiles.length)
+            : t(this.plugin.settings.language, 'no_audio_files', folderPath);
+        this.updateSourceAppearance();
     }
 
-    /** Clear the loaded folder / playlist. */
     clearFolder(): void {
-        this.currentMusicFolder = '';
-        this.playlistFiles = [];
+        this.stopCurrentPlayback();
         if (this.musicStatusEl) this.musicStatusEl.textContent = t(this.plugin.settings.language, 'no_music');
     }
 
-    /** Play audio if a playlist is loaded. Does nothing if already playing. */
-    playIfReady(): void {
-        const streamUrl = this.plugin.settings.globalMusicStreamUrl;
-        if (streamUrl && (streamUrl.includes('youtu.be') || streamUrl.includes('youtube.com'))) {
-            if (this.iframeEl.src.includes('autoplay=0')) {
-                this.iframeEl.src = this.iframeEl.src.replace('autoplay=0', 'autoplay=1');
-                if (this.playPauseBtn) this.playPauseBtn.textContent = '⏸ Pause';
-            }
-            return;
-        }
-        if (streamUrl) {
-            if (this.audioPlayer.src !== streamUrl) this.audioPlayer.src = streamUrl;
-            this.audioPlayer.play().catch(e => console.error('Audio play failed:', e));
-            return;
-        }
+    private youtubeCommand(command: 'playVideo' | 'pauseVideo'): void {
+        if (this.sourceKind !== 'youtube') return;
+        this.iframeEl.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: command, args: [] }), 'https://www.youtube.com');
+    }
 
-        if (this.playlistFiles.length > 0) {
-            if (!this.audioPlayer.src || this.audioPlayer.src === '') {
+    playIfReady(): void {
+        if (this.sourceKind === 'youtube') {
+            this.youtubeShouldPlay = true;
+            this.youtubeCommand('playVideo');
+            return;
+        }
+        if (this.sourceKind === 'stream') {
+            this.audioPlayer.play().catch(error => console.error('Audio stream playback failed:', error));
+            return;
+        }
+        if (this.sourceKind === 'folder' && this.playlistFiles.length) {
+            if (!this.audioPlayer.src) {
                 if (this.playbackMode === 'rand') this.currentTrackIndex = this.shuffledIndices[this.shuffleCursor] || 0;
                 this.loadTrack();
             } else {
-                this.audioPlayer.play().catch(e => console.error('Audio play failed:', e));
+                this.audioPlayer.play().catch(error => console.error('Audio playback failed:', error));
             }
         }
     }
 
     pause(): void {
-        const streamUrl = this.plugin.settings.globalMusicStreamUrl;
-        if (streamUrl && (streamUrl.includes('youtu.be') || streamUrl.includes('youtube.com'))) {
-            this.iframeEl.src = this.iframeEl.src.replace('autoplay=1', 'autoplay=0');
-            if (this.playPauseBtn) this.playPauseBtn.textContent = '▶ Play';
-            return;
+        if (this.sourceKind === 'youtube') {
+            this.youtubeShouldPlay = false;
+            this.youtubeCommand('pauseVideo');
         }
-        this.audioPlayer.pause();
+        else this.audioPlayer.pause();
     }
 
     /** Advance to the next track (or loop/shuffle depending on mode). */

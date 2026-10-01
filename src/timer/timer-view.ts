@@ -43,8 +43,10 @@ export class TimerView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: HabitTimerPlugin) {
         super(leaf);
         this.plugin = plugin;
-        this.musicPlayer = new MusicPlayer(this.app, this.plugin);
-        this.engine = new TimerEngine(this);
+        this.musicPlayer = plugin.persistentMusicPlayer ??= new MusicPlayer(this.app, plugin);
+        this.musicPlayer.ensureRendered(this.containerEl.ownerDocument);
+        this.engine = plugin.persistentTimerEngine ??= new TimerEngine(this);
+        this.engine.attachView(this);
     }
 
     getViewType() { return VIEW_TYPE_TIMER; }
@@ -54,7 +56,7 @@ export class TimerView extends ItemView {
     async onOpen() {
         await this.plugin.ensureHabitProperties();
         await this.render();
-        await this.recoverActiveTimer();
+        if (!this.engine.isTicking()) await this.recoverActiveTimer();
     }
 
     async onClose() {
@@ -62,9 +64,7 @@ export class TimerView extends ItemView {
         if (this.svelteApp) { try { await unmount(this.svelteApp); } catch { /* ignore */ } this.svelteApp = null; }
         if (this.heatmapApp) { try { await unmount(this.heatmapApp); } catch { /* ignore */ } this.heatmapApp = null; }
         if (this.heatmapControlsApp) { try { await unmount(this.heatmapControlsApp); } catch { /* ignore */ } this.heatmapControlsApp = null; }
-        // Stop the tick interval but do NOT reset the timer state —
-        // recoverActiveTimer() will resume it when the view is re-opened
-        this.engine.suspend();
+        // The engine and music player belong to the plugin so navigation cannot stop a session.
     }
 
     async render() {
@@ -107,7 +107,12 @@ export class TimerView extends ItemView {
         const callbacks = [...this.onRefreshCallbacks];
 
         if (type === 'timer') {
-            if (prop.musicFolder && this.plugin.settings.globalMusicFolder) {
+            if (this.plugin.settings.activeMusicSource?.startsWith('url:') && this.plugin.settings.globalMusicStreamUrl) {
+                this.musicPlayer.loadFolder('stream');
+            } else if (this.plugin.settings.activeMusicSource?.startsWith('folder:') && this.plugin.settings.globalMusicFolder) {
+                const folderName = this.plugin.settings.activeMusicSource.substring('folder:'.length);
+                this.musicPlayer.loadFolder(`${this.plugin.settings.globalMusicFolder}/${folderName}`);
+            } else if (prop.musicFolder && this.plugin.settings.globalMusicFolder) {
                 const fullPath = `${this.plugin.settings.globalMusicFolder}/${prop.musicFolder}`;
                 this.musicPlayer.loadFolder(fullPath);
             } else {

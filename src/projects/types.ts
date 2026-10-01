@@ -100,6 +100,8 @@ export interface ProjectTask {
     order?: number;
     sourceLine?: number;
     blockId?: string;
+    /** Project item identifier stored beside a task imported from GitHub. */
+    githubItemId?: string;
     parentId?: string;
     indent?: number;
     archived?: boolean;

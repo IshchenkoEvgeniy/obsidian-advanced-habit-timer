@@ -7,7 +7,7 @@ The Companion keeps Telegram timers, habit actions, reminders, and reports worki
 - Telegram sends updates to `POST /telegram` using a secret webhook header.
 - D1 stores configuration, current values, active timers, and an append-only event queue.
 - Cron runs every minute to complete target timers and send scheduled reports.
-- Obsidian pulls events first, applies each event once, then pushes a fresh 120-day snapshot.
+- Obsidian pulls events first and applies each event once. It sends changed habit values and project tasks, with a full reconciliation at least once a day.
 - `COMPANION_API_TOKEN` protects every synchronization and setup endpoint.
 
 ## Deploy

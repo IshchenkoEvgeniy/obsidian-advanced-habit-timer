@@ -3,6 +3,7 @@ import { projectTaskId, type ProjectScopeDefinition, type ProjectTask, type Proj
 import { parseDuration, getObject, getString, getStringOpt, getNumber } from '../../utils';
 import { projectScopeCacheSignature, type ProjectCache } from './cache';
 import { blockIdFromTaskLine, taskDisplayTitle, virtualTaskId } from './task-identity';
+import { GITHUB_IMPORT_SECTION } from '../native-checklist';
 import { getCommunityPlugin, getDataviewApi } from '../community-plugins';
 
 export class ProjectParser {
@@ -258,7 +259,12 @@ export class ProjectParser {
                     currentStatus = matchedCol;
                 }
                 if (headMatch[1]?.length === 1) currentSection = undefined;
-                if (headMatch[1]?.length === 2) currentSection = matchedCol ? undefined : headerText;
+                if (headMatch[1]?.length === 2) {
+                    currentSection = matchedCol ? undefined : headerText;
+                    if (headerText === GITHUB_IMPORT_SECTION) {
+                        currentStatus = columns[0] || 'Backlog';
+                    }
+                }
                 activeGroup = undefined;
                 activeNestedGroup = undefined;
                 currentTask = null;
@@ -321,6 +327,7 @@ export class ProjectParser {
                     if (endMatch && endMatch[1]) endDate = endMatch[1];
 
                     const blockId = blockIdFromTaskLine(line);
+                    const githubItemId = rawText.match(/<!-- github-project-item: ([^>]+) -->/)?.[1]?.trim();
                     const inlineStatus = rawText.match(/<!-- project-status: ([^>]+) -->/)?.[1]?.trim();
                     const name = taskDisplayTitle(rawText);
                     const numbered = rawText.match(/^\*{0,2}(\d+(?:\.\d+)+)\*{0,2}(?:\s|$)/)?.[1];
@@ -370,6 +377,7 @@ export class ProjectParser {
                         order: i,
                         sourceLine: i,
                         blockId,
+                        githubItemId,
                         parentId: parentTask?.id,
                         checklistAncestors,
                         indent,

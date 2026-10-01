@@ -69,6 +69,7 @@
     let loadedScopeId = '';
     let busy = false;
     let savedViews: SavedView[] = [];
+    let viewDrafts: Record<string, ViewConfig> = {};
     let activeViewId = 'all';
     let addingView = false;
     let newViewName = '';
@@ -192,6 +193,7 @@
     $: hasChecklistHierarchy = ctx.allTasks.some(task => Boolean(task.checklistAncestors?.length) &&
         (scope.sourceType !== 'file' || task.file.path === scope.sourceValue));
     $: if (hasChecklistHierarchy && (groupBy !== 'section' || sortRules.length)) {
+        if (groupBy === 'status') stageGrouping = 'status';
         groupBy = 'section';
         sortRules = [];
     }
@@ -207,7 +209,7 @@
     $: tableWidth = 80 + tableColumns.reduce((sum, column) => sum + column.width, 0);
     $: hierarchy = buildTableHierarchy(ctx.allTasks, ctx.columns[ctx.columns.length - 1] || 'Done');
     $: stageStatuses = new Map(collectTableStages(ctx.allTasks).map(stage => [stage.key, aggregateChecklistStatus(stage.rows, ctx.columns)]));
-    $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words),
+    $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words, hierarchy, hasChecklistHierarchy),
         scope, groupBy === 'section' ? stageGrouping : 'none', hierarchy.stageProgress,
         lang === 'ru' ? 'Без группы этапов' : 'Ungrouped stages', stageStatuses, ctx.columns);
     $: allStages = collectTableStages(ctx.allTasks);
@@ -288,12 +290,19 @@
         showEstimateSum = config.showEstimateSum !== false;
         showSpentSum = config.showSpentSum === true;
         stageGrouping = config.stageGrouping || 'none';
+        if (ctx.allTasks.some(task => task.checklistAncestors?.length &&
+            (scope.sourceType !== 'file' || task.file.path === scope.sourceValue)) && groupBy === 'status') {
+            groupBy = 'section';
+            stageGrouping = 'status';
+        }
         columnWidths = normalizeColumnWidths(config.columnWidths);
         toolbarHeight = config.toolbarHeight ?? 44;
         selectedCells = new Set();
     }
 
     function loadPreferences(id: string): void {
+        const structuredChecklist = ctx.allTasks.some(task => task.checklistAncestors?.length &&
+            (scope.sourceType !== 'file' || task.file.path === scope.sourceValue));
         loadedScopeId = id;
         initializedChecklistScope = '';
         restoredCollapseForScope = false;
@@ -314,11 +323,12 @@
         collapsedParents = defaultCollapsedParents();
         collapsedTasks = new Set();
         collapsedStageGroups = new Set();
-        stageGrouping = 'none';
+        stageGrouping = structuredChecklist ? 'status' : 'none';
         columnWidths = {};
         toolbarHeight = 44;
         stageGroupEditorOpen = false;
         savedViews = [];
+        viewDrafts = {};
         activeViewId = 'all';
         try {
             const saved = JSON.parse(localStorage.getItem(prefKey(id)) || 'null');
@@ -336,19 +346,31 @@
                 savedViews = saved.savedViews.filter((view: SavedView) =>
                     typeof view?.id === 'string' && typeof view.name === 'string' && view.config && typeof view.config === 'object')
                     .map((view: SavedView) => ({ ...view, config: normalizeTableViewConfig(view.config, fallback) }));
+                if (saved.viewDrafts && typeof saved.viewDrafts === 'object' && !Array.isArray(saved.viewDrafts)) {
+                    for (const view of savedViews) {
+                        const draft = saved.viewDrafts[view.id];
+                        if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
+                            viewDrafts[view.id] = normalizeTableViewConfig(draft, view.config);
+                        }
+                    }
+                }
                 if (typeof saved.activeViewId === 'string' && savedViews.some(view => view.id === saved.activeViewId)) {
                     activeViewId = saved.activeViewId;
-                    if (!hasCurrentTableViewConfig(saved)) applyConfig(savedViews.find(view => view.id === activeViewId)!.config);
+                    const activeDraft = viewDrafts[activeViewId];
+                    if (activeDraft) applyConfig(activeDraft);
+                    else if (!hasCurrentTableViewConfig(saved)) applyConfig(savedViews.find(view => view.id === activeViewId)!.config);
                 }
             }
         } catch { /* Invalid local preference is ignored. */ }
         finally {
-            if (ctx.allTasks.some(task => task.checklistAncestors?.length &&
-                (scope.sourceType !== 'file' || task.file.path === scope.sourceValue))) {
-                groupBy = 'section';
+            if (structuredChecklist) {
+                if (groupBy === 'status') {
+                    groupBy = 'section';
+                    stageGrouping = 'status';
+                }
                 sortRules = [];
-                savedViews = savedViews.map(view => view.id === activeViewId
-                    ? { ...view, config: { ...view.config, groupBy: 'section', sortRules: [] } } : view);
+                const activeDraft = viewDrafts[activeViewId];
+                if (activeDraft) viewDrafts[activeViewId] = { ...activeDraft, groupBy, stageGrouping, sortRules: [] };
             }
             if (!savedViews.some(view => view.id === 'all')) {
                 savedViews = [{ id: 'all', name: lang === 'ru' ? 'Все задачи' : 'All items', config: captureConfig() }, ...savedViews];
@@ -359,9 +381,10 @@
 
     function savePreferences(): void {
         try {
+            viewDrafts[activeViewId] = captureConfig();
             localStorage.setItem(prefKey(scope.id), JSON.stringify({
                 query, visible: [...visible], fieldOrder, hiddenGitHub: [...hiddenGitHub], groupBy, sliceBy, sliceValue,
-                sortRules, showEstimateSum, showSpentSum, stageGrouping, columnWidths, toolbarHeight, savedViews, activeViewId,
+                sortRules, showEstimateSum, showSpentSum, stageGrouping, columnWidths, toolbarHeight, savedViews, viewDrafts, activeViewId,
                 collapsedGroups: [...collapsed], collapsedParents: [...collapsedParents], collapsedTasks: [...collapsedTasks],
                 collapsedStageGroups: [...collapsedStageGroups]
             }));
@@ -390,11 +413,13 @@
         savePreferences();
     }
 
-    function activateView(id: string): void {
+    function activateView(id: string, preserveCurrent = true): void {
         const view = savedViews.find(item => item.id === id);
         if (!view) return;
+        if (id === activeViewId) return;
+        if (preserveCurrent) savePreferences();
         activeViewId = id;
-        applyConfig(view.config);
+        applyConfig(viewDrafts[id] || view.config);
         renameViewName = view.name;
         savePreferences();
     }
@@ -402,6 +427,7 @@
     function createView(): void {
         const name = newViewName.trim();
         if (!name) return;
+        savePreferences();
         const id = `view-${Date.now()}`;
         savedViews = [...savedViews, { id, name, config: captureConfig() }];
         activeViewId = id;
@@ -420,12 +446,22 @@
 
     function deleteActiveView(): void {
         if (activeViewId === 'all') return;
+        delete viewDrafts[activeViewId];
         savedViews = savedViews.filter(view => view.id !== activeViewId);
-        activateView('all');
+        activateView('all', false);
     }
 
     function fieldLabel(field: Field | 'title'): string { return words[field]; }
     function stageKey(group: RowGroup): string { return tableStageKey(group); }
+    function stageKeyForTask(task: ProjectTask): string { return task.sectionKey || `stage:${task.section}`; }
+    function stageIsDone(section: string): boolean {
+        return stageStatuses.get(section) === (ctx.columns[ctx.columns.length - 1] || 'Done');
+    }
+    function groupIssueCount(group: RowGroup): number {
+        if (!hasChecklistHierarchy || groupBy === 'section') return group.rows.length;
+        const stages = new Set(group.rows.filter(task => task.section?.startsWith('Этап ')).map(task => task.section));
+        return stages.size + group.rows.filter(task => !task.section?.startsWith('Этап ') && !task.parentId).length;
+    }
 
     function openStageGroupEditor(): void {
         stageGroupDrafts = { ...(scope.stageGroups || {}) };
@@ -551,13 +587,17 @@
     }
 
     function makeGroups(tasks: ProjectTask[], _query: string, groupField: GroupField, sliceField: GroupField,
-        selectedSlice: string, _sortRules: SortRule[], labels: typeof words): RowGroup[] {
+        selectedSlice: string, _sortRules: SortRule[], labels: typeof words, tree: ReturnType<typeof buildTableHierarchy>,
+        checklistHierarchy: boolean): RowGroup[] {
         const filtered = tasks.filter(task => matchesQuery(task) &&
             (sliceField === 'none' || !selectedSlice ||
                 (hasChecklistHierarchy && sliceField === 'status' ? stageStatuses.get(task.section || '') : groupValue(task, sliceField)) === selectedSlice));
         const byGroup = new Map<string, ProjectTask[]>();
         for (const task of filtered) {
-            const key = groupValue(task, groupField);
+            const progress = task.section ? tree.stageProgress.get(task.section) : undefined;
+            const key = checklistHierarchy && groupField === 'status' && task.section?.startsWith('Этап ') && progress?.total
+                ? (progress.done === progress.total ? ctx.columns[ctx.columns.length - 1] || '' : ctx.columns[0] || '')
+                : groupValue(task, groupField);
             if (!byGroup.has(key)) byGroup.set(key, []);
             byGroup.get(key)!.push(task);
         }
@@ -1163,7 +1203,7 @@
                                 <td class="title-cell"><div class="stage-content">
                                     <button class="group-toggle" title={collapsed.has(group.key) ? (lang === 'ru' ? 'Развернуть этап' : 'Expand stage') : (lang === 'ru' ? 'Свернуть этап' : 'Collapse stage')}
                                         aria-expanded={!collapsed.has(group.key)} on:click={() => toggleGroup(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
-                                    <span class="stage-icon" use:icon={hierarchy.stageProgress.get(group.key)?.done === hierarchy.stageProgress.get(group.key)?.total ? 'circle-check' : 'circle-dot'}></span>
+                                    <span class="stage-icon" use:icon={stageIsDone(group.key) ? 'circle-check' : 'circle-dot'}></span>
                                     <button class="stage-title" on:click={() => toggleGroup(group.key)}>{group.label}</button>
                                     {#if scope.githubNativeItems?.[stageKey(group)]?.url}
                                         <a class="github-item-link" href={scope.githubNativeItems[stageKey(group)]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
@@ -1200,7 +1240,7 @@
                                 <button class="group-toggle" title={group.label} aria-label={group.label} on:click={() => toggleGroup(group.key)} aria-expanded={!collapsed.has(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
                                 <span class:priority-high={groupBy === 'priority' && group.key === 'high'} class:priority-medium={groupBy === 'priority' && group.key === 'medium'} class:priority-low={groupBy === 'priority' && group.key === 'low'} class="group-dot"></span>
                                 <strong>{group.label}</strong>
-                                <span class="group-count">{group.rows.length}</span>
+                                <span class="group-count">{groupIssueCount(group)}</span>
                                 {#if showEstimateSum}<span class="group-sum">{words.estimate}: {plugin.formatTime(group.estimate)}</span>{/if}
                                 {#if showSpentSum}<span class="group-sum">{words.spent}: {plugin.formatTime(group.spent)}</span>{/if}
                             </td></tr>
@@ -1216,6 +1256,41 @@
                         {/if}
                         {#if !collapsed.has(group.key)}
                             {#each group.rows as task, index (task.id)}
+                                {#if groupBy !== 'section' && hasChecklistHierarchy && task.section?.startsWith('Этап ') && (index === 0 || group.rows[index - 1]?.section !== task.section)}
+                                    <tr class="stage-row" class:completed={stageIsDone(task.section || '')}>
+                                        <td class="row-index"><span class="row-number">{task.section.match(/^Этап\s+(\d+)/)?.[1] || ''}</span></td>
+                                        <td class="title-cell"><div class="stage-content">
+                                            <button class="group-toggle" title={collapsed.has(task.section) ? (lang === 'ru' ? 'Развернуть этап' : 'Expand stage') : (lang === 'ru' ? 'Свернуть этап' : 'Collapse stage')}
+                                                aria-expanded={!collapsed.has(task.section)} on:click={() => toggleGroup(task.section || '')}><span use:icon={collapsed.has(task.section) ? 'chevron-right' : 'chevron-down'}></span></button>
+                                            <span class="stage-icon" use:icon={stageIsDone(task.section || '') ? 'circle-check' : 'circle-dot'}></span>
+                                            <button class="stage-title" on:click={() => toggleGroup(task.section || '')}>{task.section}</button>
+                                            {#if scope.githubNativeItems?.[stageKeyForTask(task)]?.url}
+                                                <a class="github-item-link" href={scope.githubNativeItems[stageKeyForTask(task)]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
+                                            {/if}
+                                            <button class="add-subissue" title={lang === 'ru' ? 'Добавить задачу в этап' : 'Add issue to stage'}
+                                                aria-label={`${task.section}: ${lang === 'ru' ? 'Добавить задачу' : 'Add issue'}`}
+                                                on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== task.section)); addingChild = { kind: 'stage', stage: task.section || '', task }; childName = ''; }}><span use:icon={'plus'}></span></button>
+                                        </div></td>
+                                        {#each shownFields as field (field)}
+                                            <td class:field-status={field === 'status'}>
+                                                {#if field === 'subIssues'}<SubIssuesProgress done={hierarchy.stageProgress.get(task.section || '')?.done || 0} total={hierarchy.stageProgress.get(task.section || '')?.total || 0} label={words.subIssues} />
+                                                {:else if field === 'status'}<span class="status-pill" class:done={stageIsDone(task.section || '')}>{stageIsDone(task.section || '') ? ctx.columns[ctx.columns.length - 1] : ctx.columns[0]}</span>
+                                                {:else if field === 'section'}<span class="plain-value">{task.section}</span>{/if}
+                                            </td>
+                                        {/each}
+                                        {#each customFields as field (field.id)}<td>{#if field.name === 'Этап'}<span class="plain-value">{task.section}</span>{/if}</td>{/each}
+                                        <td class="end-cell"></td>
+                                    </tr>
+                                    {#if addingChild?.kind === 'stage' && addingChild.stage === task.section}
+                                        <tr class="subissue-add-row"><td class="row-index"></td><td colspan={shownFields.length + customFields.length + 2}>
+                                            <input bind:value={childName} use:focus placeholder={lang === 'ru' ? 'Название задачи' : 'Issue title'}
+                                                on:keydown={(event) => { if (event.key === 'Enter') void createChecklistChild(); if (event.key === 'Escape') addingChild = null; }} />
+                                            <button on:click={() => void createChecklistChild()}>{lang === 'ru' ? 'Добавить' : 'Add'}</button>
+                                            <button on:click={() => addingChild = null}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
+                                        </td></tr>
+                                    {/if}
+                                {/if}
+                                {#if groupBy === 'section' || !task.section?.startsWith('Этап ') || !collapsed.has(task.section)}
                                 {#each task.checklistAncestors || [] as ancestor, depth (ancestor.id)}
                                     {#if (index === 0 || group.rows[index - 1]?.checklistAncestors?.[depth]?.id !== ancestor.id) && !task.checklistAncestors?.slice(0, depth).some(parent => collapsedParents.has(parent.id))}
                                         <tr class="checklist-parent-row" style={statusStyle(ancestorStatus(ancestor.id))}>
@@ -1366,6 +1441,7 @@
                                     </td></tr>
                                 {/if}
                                 {/if}
+                                {/if}
                             {/each}
                             {#if !ctx.allTasks.some(item => item.checklistAncestors?.length)}
                             <tr class="add-row"><td colspan={shownFields.length + customFields.length + 3}>
@@ -1512,6 +1588,8 @@
     .stage-group-assignments input { width:100%; height:30px; }
     .stage-group-editor-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
     .stage-icon { display:inline-flex; flex:none; width:17px; height:17px; color:var(--color-green); }
+    .stage-row.completed .stage-icon { color:var(--color-purple, #8957e5); }
+    .stage-row.completed .status-pill { border-color:color-mix(in srgb, var(--color-purple, #8957e5) 45%, transparent); background:color-mix(in srgb, var(--color-purple, #8957e5) 16%, var(--background-primary)); color:var(--color-purple, #8957e5); }
     .stage-title { min-width:0; overflow:hidden; padding:0; border:0; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.8rem; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
     .stage-title:hover { color:var(--text-accent); text-decoration:underline; }
     .group-toggle { display:inline-flex; vertical-align:middle; padding:2px; border:0; box-shadow:none; background:transparent; }

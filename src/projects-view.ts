@@ -13,6 +13,7 @@ import { GitHubProjectsClient, parseGitHubProjectUrl, parseGitHubRepositoryUrl, 
 import { checklistChecks, checklistGroups, checklistMarker, remoteChecklistChecks, renderChecklistBody, replaceManagedChecklist } from './projects/checklist-sync';
 import { nativeChecklistMarker, nativeChecklistNodes } from './projects/native-checklist';
 import { aggregateChecklistStatus } from './projects/checklist-status';
+import { importGitHubChecklistItems } from './projects/github-import';
 import { localStatusForRemote, localValues, planGitHubSync, remoteOptionForLocal, remoteValues, syncPlanSummary, type SyncedField } from './projects/github-sync';
 import {
     activeScopeId as activeScopeIdStore,
@@ -366,7 +367,8 @@ export class ProjectsView extends ItemView {
         const connection = await this.promptGitHubConnection(scope);
         if (!connection) return;
         if (scope.githubProjectUrl && scope.githubProjectUrl.replace(/\/$/, '') !== connection.url.replace(/\/$/, '') &&
-            Object.keys(scope.githubBindings || {}).length) {
+            (Object.keys(scope.githubBindings || {}).length || Object.keys(scope.githubNativeItems || {}).length ||
+                Object.keys(scope.githubChecklistGroups || {}).length)) {
             new Notice('This Obsidian project already has GitHub item links. Create a separate project for another GitHub URL.', 10000);
             return;
         }
@@ -787,8 +789,8 @@ export class ProjectsView extends ItemView {
             Object.keys(scope.githubNativeItems || {}).length) {
             throw new Error('This project is already linked to another Issues repository.');
         }
-        const nodes = nativeChecklistNodes(tasks);
-        const localDescriptions = await this.dataEngine.checklistDescriptions(scope);
+        let nodes = nativeChecklistNodes(tasks);
+        let localDescriptions = await this.dataEngine.checklistDescriptions(scope);
         const remoteById = new Map(snapshot.items.map(item => [item.id, item]));
         const findExisting = (node: typeof nodes[number]): typeof snapshot.items[number] | undefined => {
             const previous = scope.githubNativeItems?.[node.key];
@@ -796,6 +798,10 @@ export class ProjectsView extends ItemView {
                 const linked = remoteById.get(previous.itemId);
                 if (!linked) throw new Error(`Linked Issue is missing from the Project: ${node.title}`);
                 return linked;
+            }
+            if (node.task?.githubItemId) {
+                const imported = remoteById.get(node.task.githubItemId);
+                if (imported) return imported;
             }
             const marker = nativeChecklistMarker(scope.id, node.key);
             const marked = snapshot.items.find(item => item.body.includes(marker));
@@ -819,27 +825,52 @@ export class ProjectsView extends ItemView {
         const matchByTitleAndParent = (node: typeof nodes[number], parentIssueId?: string): typeof snapshot.items[number] | undefined => {
             const candidates = snapshot.items.filter(item => item.contentType === 'Issue' && !item.archived &&
                 !claimedItems.has(item.id) && item.title === node.title && item.parentIssueId === parentIssueId &&
-                (!item.url || item.url.startsWith(`${normalizedRepository}/issues/`)) &&
+                (!item.url || item.url.toLowerCase().startsWith(`${normalizedRepository.toLowerCase()}/issues/`)) &&
                 !item.body.includes('<!-- obsidian-checklist-node:') &&
                 !item.body.includes('<!-- obsidian-project-task:'));
             if (candidates.length > 1) throw new Error(`Multiple Issues match ${node.title}; link one manually before syncing.`);
             return candidates[0];
         };
-        for (const node of nodes) {
-            const parent = node.parentKey ? plannedExisting.get(node.parentKey) : undefined;
-            const found = findExisting(node) || (!node.parentKey || parent?.contentType === 'Issue'
-                ? matchByTitleAndParent(node, parent?.contentId) : undefined);
-            if (!found) continue;
-            if (claimedItems.has(found.id)) throw new Error(`The same GitHub item matches multiple checklist tasks: ${found.title}`);
-            plannedExisting.set(node.key, found);
-            claimedItems.add(found.id);
+        const planExisting = (): void => {
+            plannedExisting.clear();
+            claimedItems.clear();
+            for (const node of nodes) {
+                const parent = node.parentKey ? plannedExisting.get(node.parentKey) : undefined;
+                const found = findExisting(node) || (!node.parentKey || parent?.contentType === 'Issue'
+                    ? matchByTitleAndParent(node, parent?.contentId) : undefined);
+                if (!found) continue;
+                if (claimedItems.has(found.id)) throw new Error(`The same GitHub item matches multiple checklist tasks: ${found.title}`);
+                plannedExisting.set(node.key, found);
+                claimedItems.add(found.id);
+            }
+        };
+        planExisting();
+        const imported = await importGitHubChecklistItems(this.app, scope, tasks, nodes, snapshot.items,
+            plannedExisting, normalizedRepository);
+        if (imported.count) {
+            tasks = await this.dataEngine.loadTasks(scope);
+            for (const item of snapshot.items) {
+                const task = tasks.find(candidate => candidate.githubItemId === item.id);
+                if (!task) continue;
+                const description = issueDescription(item.body, nativeChecklistMarker(scope.id, `leaf:${task.id}`));
+                if (description && !task.notePath) {
+                    await this.dataEngine.saveChecklistNodeDescription(scope, `leaf:${task.id}`, description);
+                }
+            }
+            nodes = nativeChecklistNodes(tasks);
+            localDescriptions = await this.dataEngine.checklistDescriptions(scope);
+            planExisting();
+            await this.loadTasks();
         }
         const convertible = [...plannedExisting.values()].filter(item => item.contentType === 'DraftIssue' && !item.archived).length;
         const newIssues = nodes.length - plannedExisting.size;
         if ((newIssues || convertible) && !(await this.confirmNativeChecklist(normalizedRepository,
-            newIssues, convertible, plannedExisting.size - convertible))) return;
+            newIssues, convertible, plannedExisting.size - convertible))) {
+            if (imported.count) new Notice(`${imported.count} GitHub items imported into Obsidian. Issue conversion was cancelled.`);
+            return;
+        }
         const repositoryId = newIssues || convertible ? await client.repositoryId(normalizedRepository) : '';
-        const stages = [...new Set(nodes.map(node => node.stage))];
+        const stages = [...new Set(nodes.map(node => node.stage).filter(Boolean))];
         let stageField = snapshot.fields.find(field => field.name === 'Этап' && field.type === 'SINGLE_SELECT');
         if (!stageField) stageField = await client.createStageField(snapshot.id, stages);
         else stageField = await client.ensureStageOptions(stageField, stages);
@@ -856,11 +887,11 @@ export class ProjectsView extends ItemView {
         const doneStatus = this.columns[this.columns.length - 1] || 'Done';
         const pulls: { line: number; checked?: boolean; status?: string; task: ProjectTask }[] = [];
         const synchronizedStatuses = new Map<string, string>();
-        const warnings: string[] = [];
+        const warnings: string[] = [...imported.warnings];
         const issueIds = new Map<string, string>();
         const statusField = snapshot.fields.find(field => field.name === 'Status' && field.type === 'SINGLE_SELECT');
         if (!statusField) warnings.push('GitHub Project has no Status field; intermediate task statuses cannot be synchronized.');
-        let changed = 0;
+        let changed = imported.count;
         let processed = 0;
         let bindingsUpdated = connectionChanged;
         for (const node of nodes) {
@@ -875,9 +906,8 @@ export class ProjectsView extends ItemView {
             }
             if (item?.archived) throw new Error(`Linked Issue is archived in the Project: ${node.title}`);
             if (item?.contentType === 'PullRequest') throw new Error(`A pull request is linked to checklist node: ${node.title}`);
-            if (item?.contentType === 'Issue' && item.url && !item.url.startsWith(`${normalizedRepository}/issues/`)) {
-                throw new Error(`Linked Issue belongs to another repository: ${item.url}`);
-            }
+            const externalIssue = item?.contentType === 'Issue' && typeof item.url === 'string' &&
+                !item.url.toLowerCase().startsWith(`${normalizedRepository.toLowerCase()}/issues/`);
             if (item?.contentType === 'DraftIssue') {
                 const converted = await client.convertDraftToIssue(item.id, repositoryId);
                 const marker = nativeChecklistMarker(scope.id, node.key);
@@ -930,7 +960,9 @@ export class ProjectsView extends ItemView {
             issueIds.set(node.key, item.contentId);
             if (parentIssueId && item.parentIssueId !== parentIssueId) {
                 if (item.parentIssueId) warnings.push(`Parent changed on GitHub; skipped reparenting: ${node.title}`);
-                else {
+                else if (externalIssue) {
+                    warnings.push(`Issue from another repository was not reparented: ${item.url}`);
+                } else {
                     await client.addSubIssue(parentIssueId, item.contentId);
                     item.parentIssueId = parentIssueId;
                     changed++;
@@ -982,12 +1014,14 @@ export class ProjectsView extends ItemView {
                     bindingsUpdated = true;
                 }
             }
-            const stageOption = stageField.options?.find(option => option.name === node.stage);
-            if (!stageOption) throw new Error(`Stage option was not created: ${node.stage}`);
-            if (stageOption && item.fields['Этап'] !== node.stage) {
-                await client.updateStatus(snapshot.id, item.id, stageField.id, stageOption.id);
-                item.fields['Этап'] = node.stage;
-                changed++;
+            if (node.stage) {
+                const stageOption = stageField.options?.find(option => option.name === node.stage);
+                if (!stageOption) throw new Error(`Stage option was not created: ${node.stage}`);
+                if (item.fields['Этап'] !== node.stage) {
+                    await client.updateStatus(snapshot.id, item.id, stageField.id, stageOption.id);
+                    item.fields['Этап'] = node.stage;
+                    changed++;
+                }
             }
             if (node.kind === 'leaf' && node.task) {
                 const createdNow = !previous && !plannedExisting.has(node.key);
@@ -1132,7 +1166,8 @@ export class ProjectsView extends ItemView {
                 if (pull.status !== undefined) {
                     const firstStatus = this.columns[0] || 'Backlog';
                     const cleaned = lines[pull.line]!.replace(/\s*<!-- project-status: [^>]* -->/g, '');
-                    const marker = pull.status === firstStatus || pull.status === doneStatus ? '' :
+                    const marker = pull.status === doneStatus ||
+                        (pull.status === firstStatus && !pull.task.githubItemId) ? '' :
                         ` <!-- project-status: ${pull.status.replace(/-->/g, '')} -->`;
                     lines[pull.line] = /\s+\^[A-Za-z0-9-]+\s*$/.test(cleaned)
                         ? cleaned.replace(/(\s+\^[A-Za-z0-9-]+\s*)$/, `${marker}$1`)

@@ -268,6 +268,11 @@ export class CloudflareCompanionService {
                 });
             }
         }
+        const now = Date.now();
+        const fullRefreshMs = 24 * 60 * 60 * 1000;
+        const valuesHash = this.hashSnapshot(values);
+        const shouldPushValues = valuesHash !== (this.plugin.settings.cloudflareValuesSyncHash || '') ||
+            now - (this.plugin.settings.cloudflareValuesLastPushAt || 0) >= fullRefreshMs;
         const library = await this.buildLibrarySnapshot();
         const libraryHash = this.hashSnapshot(library);
         // MetadataCache may still contain the pre-event value immediately after processFrontMatter.
@@ -276,6 +281,13 @@ export class CloudflareCompanionService {
         const projects = await this.buildProjectSnapshot();
         const projectsHash = this.hashSnapshot(projects);
         const shouldPushProjects = projectsHash !== (this.plugin.settings.cloudflareProjectsSyncHash || '');
+        const boardTasks = !skipLibrary ? await new CloudflareProjectService(this.plugin).snapshot() : undefined;
+        const projectScopes = !skipLibrary ? this.plugin.settings.projectScopes.map(({id,name,statuses,sourceType}) =>
+            ({id,name,statuses,sourceType})) : undefined;
+        const boardHash = boardTasks ? this.hashSnapshot({boardTasks,projectScopes}) : '';
+        const shouldPushBoard = !!boardTasks && (boardHash !== (this.plugin.settings.cloudflareBoardSyncHash || '') ||
+            now - (this.plugin.settings.cloudflareBoardLastPushAt || 0) >= fullRefreshMs);
+        const reconcileCounts = now - (this.plugin.settings.cloudflareLastCountCheckAt || 0) >= 60 * 60 * 1000;
         const today = new Intl.DateTimeFormat('en-CA', {
             timeZone: this.plugin.settings.cloudflareTimezone || 'Europe/Kyiv',
             year: 'numeric', month: '2-digit', day: '2-digit'
@@ -307,8 +319,8 @@ export class CloudflareCompanionService {
             };
         });
         const snapshot = {
-            ...(!skipLibrary ? { boardTasks: await new CloudflareProjectService(this.plugin).snapshot(),
-                projectScopes: this.plugin.settings.projectScopes.map(({id,name,statuses,sourceType})=>({id,name,statuses,sourceType})) } : {}),
+            ...(shouldPushBoard ? { boardTasks, projectScopes } : {}),
+            reconcileCounts,
             chatId: this.plugin.settings.telegramChatId.trim(),
             timezone: this.plugin.settings.cloudflareTimezone || 'Europe/Kyiv',
             language: this.plugin.settings.language,
@@ -320,7 +332,7 @@ export class CloudflareCompanionService {
                 eveningTime: this.plugin.settings.telegramEveningTime,
                 weeklyEnabled: this.plugin.settings.telegramWeeklyReport
             },
-            values,
+            values: shouldPushValues ? values : [],
             ...(shouldPushLibrary ? { library } : {}),
             ...(shouldPushProjects ? { projects } : {})
         };
@@ -351,6 +363,15 @@ export class CloudflareCompanionService {
             this.plugin.settings.cloudflareProjectsSyncHash = projectsHash;
             this.plugin.settings.cloudflareProjectsLastPushAt = Date.now();
         }
+        if (shouldPushValues) {
+            this.plugin.settings.cloudflareValuesSyncHash = valuesHash;
+            this.plugin.settings.cloudflareValuesLastPushAt = now;
+        }
+        if (shouldPushBoard) {
+            this.plugin.settings.cloudflareBoardSyncHash = boardHash;
+            this.plugin.settings.cloudflareBoardLastPushAt = now;
+        }
+        if (reconcileCounts) this.plugin.settings.cloudflareLastCountCheckAt = now;
     }
 
     private async buildProjectSnapshot() {

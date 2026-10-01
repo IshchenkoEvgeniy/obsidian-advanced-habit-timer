@@ -18,6 +18,9 @@ export class TimerEngine {
 
     constructor(private view: TimerView) {}
 
+    attachView(view: TimerView): void { this.view = view; }
+    isTicking(): boolean { return this.timerInterval !== null; }
+
     get plugin() { return this.view.plugin; }
     get app() { return this.view.app; }
 

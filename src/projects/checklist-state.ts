@@ -1,6 +1,6 @@
 import { App, normalizePath, parseYaml, stringifyYaml, TFile } from 'obsidian';
 import type { ProjectScopeDefinition, ProjectTask } from './types';
-import { nativeChecklistNodes } from './native-checklist';
+import { GITHUB_IMPORT_SECTION, nativeChecklistNodes } from './native-checklist';
 import type { GitHubItem } from './github-client';
 
 /** The checklist keeps its readable short entries; this file holds the complete current index. */
@@ -13,6 +13,7 @@ export interface ChecklistStateEntry {
     checked: boolean;
     completedAt: string | null;
     sourceLine?: number;
+    githubItemId?: string;
     stage?: string;
     priority?: string;
     tags?: string;
@@ -161,12 +162,15 @@ function restoreTaskKeys(tasks: ProjectTask[], entries: ChecklistStateEntry[]): 
             parentKey = `group:${ancestor.id}`;
         }
         const parsedId = task.id;
-        const kindPrefix = task.section?.startsWith('Этап ') ? 'leaf:' : 'task:';
+        const kindPrefix = task.section?.startsWith('Этап ') || task.section === GITHUB_IMPORT_SECTION ? 'leaf:' : 'task:';
         const parsedKey = `${kindPrefix}${parsedId}`;
         const parentId = task.parentId ? idChanges.get(task.parentId) || task.parentId : undefined;
         const expectedParent = parentId ? `${kindPrefix}${parentId}` : parentKey;
         const candidates = oldTasks.filter(entry => !claimed.has(entry.id) &&
-            entry.id.startsWith(kindPrefix) && entry.parentId === expectedParent);
+            entry.id.startsWith(kindPrefix) && entry.parentId === expectedParent &&
+            (task.githubItemId
+                ? entry.id === parsedKey || entry.githubItemId === task.githubItemId || entry.github?.itemId === task.githubItemId
+                : !entry.githubItemId || entry.id === parsedKey));
         const number = leadingNumber(task.name);
         const sameTitle = candidates.filter(entry => entry.title === task.name);
         const sameNumber = number ? candidates.filter(entry => leadingNumber(entry.title) === number) : [];
@@ -331,6 +335,7 @@ export class ChecklistStateStore {
                     status: node.task?.status || (checked ? done : scope.statuses.split(',')[0]?.trim() || 'Backlog'),
                     checked, completedAt: checked ? (previous?.checked ? previous.completedAt : previous ? new Date().toISOString() : null) : null,
                     sourceLine: node.task?.sourceLine ?? ancestorLines.get(node.key),
+                    githubItemId: node.task?.githubItemId,
                     stage: node.stage, priority: node.task?.priority, tags: node.task?.tags,
                     startDate: node.task?.startDate, dueDate: node.task?.endDate,
                     estimateSeconds: node.task?.timeEstimatedSec,
@@ -353,6 +358,7 @@ export class ChecklistStateStore {
                     title: task.name, status: task.status, checked,
                     completedAt: checked ? (previous?.checked ? previous.completedAt : previous ? new Date().toISOString() : null) : null,
                     sourceLine: task.sourceLine, stage: task.section, priority: task.priority, tags: task.tags,
+                    githubItemId: task.githubItemId,
                     startDate: task.startDate, dueDate: task.endDate, estimateSeconds: task.timeEstimatedSec,
                     timeSpentSeconds: task.timeSpentSec, habitName: task.habitName,
                     cover: task.cover, color: task.color, archived: task.archived, order: task.order,

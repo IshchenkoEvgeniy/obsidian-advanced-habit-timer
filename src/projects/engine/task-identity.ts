@@ -42,6 +42,7 @@ export function taskDisplayTitle(text: string): string {
         .replace(/(?:⏫|🔼|🔽)/g, '')
         .replace(/(?:📅|🏁)[ \t]*[\d-]{10}/g, '')
         .replace(/<!-- project-status: [^>]* -->/g, '')
+        .replace(/<!-- github-project-item: [^>]* -->/g, '')
         .replace(/<!-- project-archived -->/g, '')
         .replace(/(^|\s)#[a-zA-Z0-9_-]+(?=\s|$)/g, '$1')
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')

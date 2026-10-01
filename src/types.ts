@@ -148,6 +148,11 @@ export interface HabitTimerSettings {
     cloudflareLibraryLastPushAt?: number;
     cloudflareProjectsSyncHash?: string;
     cloudflareProjectsLastPushAt?: number;
+    cloudflareValuesSyncHash?: string;
+    cloudflareValuesLastPushAt?: number;
+    cloudflareBoardSyncHash?: string;
+    cloudflareBoardLastPushAt?: number;
+    cloudflareLastCountCheckAt?: number;
     projectScopes: ProjectScopeDefinition[];
     projShowCover?: boolean;
     projShowTags?: boolean;
@@ -295,6 +300,11 @@ export const DEFAULT_SETTINGS: HabitTimerSettings = {
     cloudflareLibraryLastPushAt: 0,
     cloudflareProjectsSyncHash: '',
     cloudflareProjectsLastPushAt: 0,
+    cloudflareValuesSyncHash: '',
+    cloudflareValuesLastPushAt: 0,
+    cloudflareBoardSyncHash: '',
+    cloudflareBoardLastPushAt: 0,
+    cloudflareLastCountCheckAt: 0,
     projectScopes: [],
     projShowCover: true,
     projShowTags: true,

@@ -110,19 +110,19 @@ export default {
       const body = await request.json() as SyncPushBody;
       if (!validPush(body)) return json({ error: 'invalid_payload' }, 400);
       await pushSnapshot(env.DB, profile(env), body);
-      const [libraryCount, projectCount] = await Promise.all([
+      const [libraryCount, projectCount] = body.reconcileCounts ? await Promise.all([
         env.DB.prepare('SELECT COUNT(*) AS count FROM library_items WHERE profile_id = ?')
           .bind(profile(env)).first<{ count: number }>(),
         env.DB.prepare('SELECT COUNT(*) AS count FROM project_tasks WHERE profile_id = ?')
           .bind(profile(env)).first<{ count: number }>()
-      ]);
+      ]) : [null, null];
       return json({
         ok: true,
         acceptedValues: body.values.length,
         acceptedLibraryItems: body.library?.length || 0,
         acceptedProjectTasks: body.projects?.length || 0,
-        libraryItemCount: Number(libraryCount?.count) || 0,
-        projectTaskCount: Number(projectCount?.count) || 0,
+        ...(body.reconcileCounts ? { libraryItemCount: Number(libraryCount?.count) || 0,
+          projectTaskCount: Number(projectCount?.count) || 0 } : {}),
         serverTime: Date.now()
       });
     }
