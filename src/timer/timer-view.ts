@@ -15,6 +15,7 @@ import {
     evaluateHabitState, readHabitExplicitState, statePreservesStreak
 } from '../habits/goals';
 import { commitTimerSession } from './timer-session-persistence';
+import { ensureDailyNoteFile } from '../services/daily-note-file';
 import { mount, unmount } from 'svelte';
 import TimerApp from '../components/timer/TimerApp.svelte';
 import Heatmap from '../components/charts/Heatmap.svelte';
@@ -255,75 +256,81 @@ export class TimerView extends ItemView {
         const existing = this.getNote(date);
         if (existing) return existing;
 
-        const folder = this.plugin.settings.dailyNotesFolder;
-        const path = folder ? `${folder}/${date}.md` : `${date}.md`;
-        try {
-            return await this.app.vault.create(path, '---\n---\n');
-        } catch (error) {
-            const retry = this.app.vault.getAbstractFileByPath(path);
-            if (retry instanceof TFile) return retry;
-            console.error('Could not create daily note for timer:', error);
-            return null;
-        }
+        return ensureDailyNoteFile(this.app, this.plugin.settings.dailyNotesFolder, date);
     }
 
     async save() {
         if (this.isSaving) return;
         this.isSaving = true;
-        await this.engine.pause();
+        try {
+            await this.engine.pause();
 
-        const f = await this.ensureDailyNote(moment().format("YYYY-MM-DD"));
-        if (!f) {
-            this.isSaving = false;
-            new Notice(t(this.plugin.settings.language, 'daily_note_not_found'));
-            return;
-        }
-        
-        const habitName = get(selectedHabit);
-        const projectSubTaskName = get(selectedSubTask);
-        const pTaskFile = get(activeProjectTaskFile);
-        
-        const subTask = pTaskFile ? `[[${pTaskFile.basename}]]${projectSubTaskName ? ` (${projectSubTaskName})` : ''}` : projectSubTaskName;
-        const displayProp = subTask ? `${habitName}: ${subTask}` : habitName;
-        
-        const isPm = get(timerMode) === 'pm';
-        const currentSec = get(timerSeconds);
-        const sSec = isPm ? (this.plugin.settings.pomodoroDuration * 60) - currentSec : currentSec;
-        if (sSec <= 0) {
-            this.isSaving = false;
-            new Notice(this.plugin.settings.language === 'ru' ? 'В сессии пока нет времени.' : 'This session has no elapsed time yet.');
-            return;
-        }
-
-        const mediaPath = get(selectedBook);
-        const note = get(sessionNote);
-
-        if (mediaPath) {
-            let currentProgress = 0;
-            const mediaFile = this.app.vault.getAbstractFileByPath(mediaPath);
-            if (mediaFile instanceof TFile) {
-                const cache = this.app.metadataCache.getFileCache(mediaFile);
-                if (cache && cache.frontmatter) {
-                    currentProgress = readPropertyNumber(cache.frontmatter as Frontmatter, this.plugin.settings, 'progress');
-                }
+            const pending = this.plugin.settings.activeTimer?.pendingCommit;
+            if (pending) {
+                const file = this.app.vault.getAbstractFileByPath(pending.dailyNotePath);
+                if (!(file instanceof TFile)) throw new Error(`Session daily note missing: ${pending.dailyNotePath}`);
+                await this.executeSave(file, pending.habitName, pending.displayProperty, pending.durationSeconds,
+                    pending.progressAdded, pending.note, pending.mediaPath);
+                this.isSaving = false;
+                return;
             }
-            const progressUnit = this.getMediaProgressUnit(mediaFile instanceof TFile ? mediaFile : null);
-            const automaticProgress = automaticTimerProgress(
-                this.getMediaProgressUnitId(mediaFile instanceof TFile ? mediaFile : null), sSec
-            );
-            new SaveMediaSessionModal(this.app, this.plugin, currentProgress, sSec, note, async (progressAdded, modalNote) => {
+
+            const f = await this.ensureDailyNote(moment().format("YYYY-MM-DD"));
+            if (!f) {
+                this.isSaving = false;
+                new Notice(t(this.plugin.settings.language, 'daily_note_not_found'));
+                return;
+            }
+        
+            const habitName = get(selectedHabit);
+            const projectSubTaskName = get(selectedSubTask);
+            const pTaskFile = get(activeProjectTaskFile);
+        
+            const subTask = pTaskFile ? `[[${pTaskFile.basename}]]${projectSubTaskName ? ` (${projectSubTaskName})` : ''}` : projectSubTaskName;
+            const displayProp = subTask ? `${habitName}: ${subTask}` : habitName;
+        
+            const isPm = get(timerMode) === 'pm';
+            const currentSec = get(timerSeconds);
+            const sSec = isPm ? (this.plugin.settings.pomodoroDuration * 60) - currentSec : currentSec;
+            if (sSec <= 0) {
+                this.isSaving = false;
+                new Notice(this.plugin.settings.language === 'ru' ? 'В сессии пока нет времени.' : 'This session has no elapsed time yet.');
+                return;
+            }
+
+            const mediaPath = get(selectedBook);
+            const note = get(sessionNote);
+
+            if (mediaPath) {
+                let currentProgress = 0;
+                const mediaFile = this.app.vault.getAbstractFileByPath(mediaPath);
+                if (mediaFile instanceof TFile) {
+                    const cache = this.app.metadataCache.getFileCache(mediaFile);
+                    if (cache && cache.frontmatter) {
+                        currentProgress = readPropertyNumber(cache.frontmatter as Frontmatter, this.plugin.settings, 'progress');
+                    }
+                }
+                const progressUnit = this.getMediaProgressUnit(mediaFile instanceof TFile ? mediaFile : null);
+                const automaticProgress = automaticTimerProgress(
+                    this.getMediaProgressUnitId(mediaFile instanceof TFile ? mediaFile : null), sSec
+                );
+                new SaveMediaSessionModal(this.app, this.plugin, currentProgress, sSec, note, async (progressAdded, modalNote) => {
+                    try {
+                        await this.executeSave(f, habitName, displayProp, sSec, progressAdded, modalNote, mediaPath);
+                    } finally {
+                        this.isSaving = false;
+                    }
+                }, () => { this.isSaving = false; }, progressUnit, automaticProgress).open();
+            } else {
                 try {
-                    await this.executeSave(f, habitName, displayProp, sSec, progressAdded, modalNote, mediaPath);
+                    await this.executeSave(f, habitName, displayProp, sSec, null, note, null);
                 } finally {
                     this.isSaving = false;
                 }
-            }, () => { this.isSaving = false; }, progressUnit, automaticProgress).open();
-        } else {
-            try {
-                await this.executeSave(f, habitName, displayProp, sSec, null, note, null);
-            } finally {
-                this.isSaving = false;
             }
+        } catch (error) {
+            this.isSaving = false;
+            throw error;
         }
     }
 

@@ -17,6 +17,7 @@ import {
     timerSeconds
 } from '../store/TimerStore';
 import { commitTimerSession } from './timer-session-persistence';
+import { ensureDailyNoteFile } from '../services/daily-note-file';
 
 export interface StartTimerSessionInput {
     habitName: string;
@@ -40,35 +41,59 @@ interface CalculatedTimerState {
 }
 
 export class TimerSessionService {
+    private operationChain: Promise<unknown> = Promise.resolve();
+
     constructor(private plugin: HabitTimerPlugin) {}
+
+    private serialize<T>(operation: () => Promise<T>): Promise<T> {
+        const next = this.operationChain.then(operation);
+        this.operationChain = next.catch(() => undefined);
+        return next;
+    }
+
+    start(input: StartTimerSessionInput): Promise<boolean> {
+        return this.serialize(() => this.startSession(input));
+    }
+
+    pause(): Promise<boolean> {
+        return this.serialize(() => this.pauseSession());
+    }
+
+    resume(): Promise<boolean> {
+        return this.serialize(() => this.resumeSession());
+    }
+
+    cancel(): Promise<boolean> {
+        return this.serialize(() => this.cancelSession());
+    }
+
+    prepareFinish(): Promise<FinishTimerRequirements | null> {
+        return this.serialize(() => this.prepareSessionFinish());
+    }
+
+    finish(input: FinishTimerInput = {}): Promise<FinishTimerSessionResult | null> {
+        return this.serialize(() => this.finishSession(input));
+    }
 
     private calculate(): CalculatedTimerState | null {
         const active = this.plugin.settings.activeTimer;
         if (!active) return null;
-        const delta = active.timerState === 'running' && active.lastStartedAt
+        const delta = (active.timerState || 'running') === 'running' && active.lastStartedAt
             ? Math.max(0, Math.floor((Date.now() - active.lastStartedAt) / 1000))
             : 0;
+        const remaining = active.mode === 'pm'
+            ? Math.max(0, active.remainingSeconds ?? this.plugin.settings.pomodoroDuration * 60)
+            : undefined;
         return {
-            elapsedSeconds: Math.max(0, active.elapsedSeconds || 0) + delta,
-            remainingSeconds: active.mode === 'pm'
-                ? Math.max(0, (active.remainingSeconds ?? this.plugin.settings.pomodoroDuration * 60) - delta)
-                : undefined
+            elapsedSeconds: Math.max(0, active.elapsedSeconds || 0) + (remaining === undefined ? delta : Math.min(delta, remaining)),
+            remainingSeconds: remaining === undefined ? undefined : Math.max(0, remaining - delta)
         };
     }
 
     private async ensureDailyNote(date: string): Promise<TFile | null> {
         const existing = this.plugin.getDailyNote(date);
         if (existing) return existing;
-        const folder = this.plugin.settings.dailyNotesFolder;
-        const path = folder ? `${folder}/${date}.md` : `${date}.md`;
-        try {
-            return await this.plugin.app.vault.create(path, '---\n---\n');
-        } catch (error) {
-            const retry = this.plugin.app.vault.getAbstractFileByPath(path);
-            if (retry instanceof TFile) return retry;
-            console.error('Could not create daily note for timer session:', error);
-            return null;
-        }
+        return ensureDailyNoteFile(this.plugin.app, this.plugin.settings.dailyNotesFolder, date);
     }
 
     private async writeTimerFrontmatter(file: TFile): Promise<void> {
@@ -140,7 +165,7 @@ export class TimerSessionService {
         isSingleFileTask.set(false);
     }
 
-    async start(input: StartTimerSessionInput): Promise<boolean> {
+    private async startSession(input: StartTimerSessionInput): Promise<boolean> {
         if (this.plugin.settings.activeTimer) return false;
         const property = this.plugin.settings.properties.find(item => item.name === input.habitName);
         if (!property || (property.type || 'timer') !== 'timer') return false;
@@ -153,13 +178,15 @@ export class TimerSessionService {
         const dailyNote = taskFile instanceof TFile ? null : await this.ensureDailyNote(date);
         const activeFile = taskFile instanceof TFile ? taskFile : dailyNote;
         if (!(activeFile instanceof TFile)) return false;
+        if (this.plugin.settings.activeTimer) return false;
 
         const mode = input.mode || 'timer';
         const now = Date.now();
         this.plugin.settings.activeTimer = {
+            sessionId: crypto.randomUUID(),
             path: activeFile.path,
             habitName: input.habitName,
-            subTask: taskFile instanceof TFile ? undefined : input.subTask,
+            subTask: input.subTask,
             mode,
             startTime: moment().format('HH:mm'),
             bookPath: input.mediaPath,
@@ -182,7 +209,7 @@ export class TimerSessionService {
         return true;
     }
 
-    async pause(): Promise<boolean> {
+    private async pauseSession(): Promise<boolean> {
         const active = this.plugin.settings.activeTimer;
         const calculated = this.calculate();
         if (!active || !calculated) return false;
@@ -197,7 +224,8 @@ export class TimerSessionService {
         return true;
     }
 
-    async resume(): Promise<boolean> {
+    private async resumeSession(): Promise<boolean> {
+        if (this.plugin.settings.activeTimer?.pendingCommit) return false;
         const active = this.plugin.settings.activeTimer;
         if (!active) return false;
         if ((active.timerState || 'running') === 'running') return true;
@@ -210,7 +238,7 @@ export class TimerSessionService {
         return true;
     }
 
-    async cancel(): Promise<boolean> {
+    private async cancelSession(): Promise<boolean> {
         const active = this.plugin.settings.activeTimer;
         if (!active) {
             this.resetStores();
@@ -223,7 +251,7 @@ export class TimerSessionService {
         return true;
     }
 
-    async prepareFinish(): Promise<FinishTimerRequirements | null> {
+    private async prepareSessionFinish(): Promise<FinishTimerRequirements | null> {
         const active = this.plugin.settings.activeTimer;
         const calculated = this.calculate();
         if (!active || !calculated) return null;
@@ -245,15 +273,18 @@ export class TimerSessionService {
         return requirements;
     }
 
-    async finish(input: FinishTimerInput = {}): Promise<FinishTimerSessionResult | null> {
+    private async finishSession(input: FinishTimerInput): Promise<FinishTimerSessionResult | null> {
         if (!this.plugin.settings.activeTimer) return null;
-        await this.pause();
+        await this.pauseSession();
         const active = this.plugin.settings.activeTimer;
         const calculated = this.calculate();
         if (!active || !calculated || calculated.elapsedSeconds <= 0) return null;
 
-        const dailyNote = await this.ensureDailyNote(moment().format('YYYY-MM-DD'));
-        if (!dailyNote) return null;
+        const pendingPath = active.pendingCommit?.dailyNotePath;
+        const dailyNote = pendingPath
+            ? this.plugin.app.vault.getAbstractFileByPath(pendingPath)
+            : await this.ensureDailyNote(moment().format('YYYY-MM-DD'));
+        if (!(dailyNote instanceof TFile)) return null;
         const projectFile = active.taskName
             ? this.plugin.app.vault.getAbstractFileByPath(active.path)
             : null;
@@ -276,6 +307,7 @@ export class TimerSessionService {
             sessionStartTime: active.startTime,
             projectTaskPath: projectFile instanceof TFile ? projectFile.path : undefined,
             projectTaskName: active.taskName,
+            projectSubTask: active.subTask,
             isSingleFileTask: active.isSingleFileTask
         });
 
@@ -283,7 +315,7 @@ export class TimerSessionService {
         this.plugin.settings.activeTimer = undefined;
         await this.plugin.saveSettings();
         this.resetStores();
-        return { durationSeconds: calculated.elapsedSeconds, savedProgress: result.savedProgress };
+        return { durationSeconds: result.durationSeconds, savedProgress: result.savedProgress };
     }
 }
 

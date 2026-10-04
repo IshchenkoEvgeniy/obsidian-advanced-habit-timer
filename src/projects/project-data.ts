@@ -34,8 +34,8 @@ export class ProjectDataEngine {
         this.cache.invalidateCachePrefix(prefix);
     }
 
-    async loadTasks(scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
-        const parsed = await this.parser.loadTasks(scope);
+    async loadTasks(scope: ProjectScopeDefinition, requireSource = false): Promise<ProjectTask[]> {
+        const parsed = await this.parser.loadTasks(scope, requireSource);
         return this.checklistState.reconcile(scope, parsed.map(task => ({ ...task,
             checklistAncestors: task.checklistAncestors?.map(ancestor => ({ ...ancestor })) })));
     }

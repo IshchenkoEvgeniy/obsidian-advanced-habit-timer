@@ -13,7 +13,10 @@ export async function dailyTasksApi(request: Request, env: Env, profile: string,
   return json({tasks:(rows.results||[]).map(r=>JSON.parse(r.data_json) as DailyTask)});
  }
  if(request.method!=='POST') return json({error:'method_not_allowed'},405);
- const body=await request.json() as {task:DailyTask;requestId:string;confirm?:boolean;action?:string;id?:string};
+ let parsed:unknown;
+ try{parsed=await request.json();}catch{return json({error:'invalid_task'},400);}
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return json({error:'invalid_task'},400);
+ const body=parsed as {task:DailyTask;requestId:string;confirm?:boolean;action?:string;id?:string};
  if(body.action==='start') {
   const row=await env.DB.prepare('SELECT data_json FROM daily_tasks WHERE profile_id=? AND id=?').bind(profile,body.id||'').first<{data_json:string}>();
   const task:DailyTask|undefined=row?JSON.parse(row.data_json) as DailyTask:undefined;
@@ -22,7 +25,7 @@ export async function dailyTasksApi(request: Request, env: Env, profile: string,
   const {time}=zonedParts(Date.now(),config.timezone);
   return await startTimer(env.DB,profile,task.habitName||'Задания',null,time,null,JSON.stringify({...task,key:task.id,kind:'daily'}))?json({ok:true}):json({error:'timer_exists'},409);
  }
- if(!body.task || !validTask(body.task) || !/^[a-f0-9-]{36}$/i.test(body.requestId)) return json({error:'invalid_task'},400);
+ if(!body.task || !validTask(body.task) || typeof body.requestId!=='string' || !/^[a-f0-9-]{36}$/i.test(body.requestId)) return json({error:'invalid_task'},400);
  if(body.task.deleted && body.confirm!==true) return json({error:'confirmation_required'},400);
  if(body.task.deleted) {
   const timer=await getTimer(env.DB,profile);

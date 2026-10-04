@@ -48,7 +48,7 @@
         return Array.from(m.entries()).map(([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
     })();
 
-    $: focusTrend = trendComparison(dailyFocusBuckets, $currentPeriod);
+    $: focusTrend = trendComparison(dailyFocusBuckets, $currentPeriod, moment().format('YYYY-MM-DD'));
 
     // Calculate score
     $: score = (() => {

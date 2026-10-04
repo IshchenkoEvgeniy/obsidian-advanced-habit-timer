@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { mediaProgressForDate } from '../src/library/daily-media-progress';
+import { appendMediaProgressRow, mediaProgressForDate } from '../src/library/daily-media-progress';
 
 describe('daily media progress', () => {
+    it('inserts new rows into a legacy progress section before later notes', () => {
+        const content = '### Progress\n| Date | Time | Progress | % | Notes |\n|---|---|---|---|---|\n\n## Notes\nKeep me\n';
+        const result = appendMediaProgressRow(content, '| 2026-07-24 | 00:05:00 | 5 | - | reading |');
+        expect(mediaProgressForDate(result, '2026-07-24')).toBe(5);
+        expect(result.match(/### .*Progress/g)).toHaveLength(1);
+        expect(result).toContain('## Notes\nKeep me');
+    });
+
     it('sums progress rows only for the requested date', () => {
         const content = [
             '### 📖 Progress',

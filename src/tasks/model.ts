@@ -28,13 +28,16 @@ export interface DailyTask {
     history?:TaskCompletion[];
 }
 export function validTask(task: DailyTask): boolean {
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return false;
     const date = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
-    return /^[a-f0-9-]{36}$/i.test(task.id) && typeof task.name === 'string' && !!task.name.trim() && task.name.length <= 250
+    return typeof task.id === 'string' && /^[a-f0-9-]{36}$/i.test(task.id)
+        && Number.isInteger(task.revision) && task.revision >= 0
+        && typeof task.name === 'string' && !!task.name.trim() && task.name.length <= 250
         && (task.carryOver===undefined||typeof task.carryOver==='boolean')
         && !/[\r\n]|<!--|-->/.test(task.name) && typeof task.date==='string' && (!task.date || date(task.date)) && (!task.noteDate||date(task.noteDate)) && (!task.deadline || date(task.deadline))
         && ['low', 'medium', 'high', ''].includes(task.priority) && typeof task.done === 'boolean' && typeof task.deleted === 'boolean'
         && typeof task.habitName === 'string' && Array.isArray(task.subtasks) && task.subtasks.length <= 100
-        && task.subtasks.every(s => typeof s.text === 'string' && !!s.text.trim() && s.text.length <= 250 && !/[\r\n]/.test(s.text) && typeof s.checked === 'boolean' && (!s.date||date(s.date)))
+        && task.subtasks.every(s => s && typeof s === 'object' && typeof s.text === 'string' && !!s.text.trim() && s.text.length <= 250 && !/[\r\n]|<!--|-->/.test(s.text) && typeof s.checked === 'boolean' && (!s.date||date(s.date)))
         && (!task.description || typeof task.description==='string'&&task.description.length<=10000)
         && (!task.status||['planned','active','waiting','completed','cancelled'].includes(task.status))
         && (!task.tags||Array.isArray(task.tags)&&task.tags.length<=50&&task.tags.every(t=>typeof t==='string'&&t.length<=100))
@@ -43,7 +46,7 @@ export function validTask(task: DailyTask): boolean {
         && validTaskTimeRange(task)
         && (!task.list||typeof task.list==='string'&&task.list.length<=150)
         && (task.order===undefined||Number.isFinite(task.order))
-        && (!task.history||Array.isArray(task.history)&&task.history.every(h=>typeof h.id==='string'&&/^[a-z0-9-]+$/i.test(h.id)&&date(h.date)&&(!h.plannedDate||date(h.plannedDate))&&typeof h.name==='string'&&Array.isArray(h.subtasks)&&h.subtasks.every(s=>typeof s.text==='string'&&typeof s.checked==='boolean')))
+        && (!task.history||Array.isArray(task.history)&&task.history.every(h=>h&&typeof h==='object'&&typeof h.id==='string'&&/^[a-z0-9-]+$/i.test(h.id)&&date(h.date)&&(!h.plannedDate||date(h.plannedDate))&&typeof h.name==='string'&&Array.isArray(h.subtasks)&&h.subtasks.every(s=>s&&typeof s==='object'&&typeof s.text==='string'&&typeof s.checked==='boolean')))
         && (!task.repeat||['daily','weekdays','monthly','after'].includes(task.repeat.kind)
             && (task.repeat.kind!=='weekdays'||Array.isArray(task.repeat.weekdays)&&task.repeat.weekdays.length>0&&task.repeat.weekdays.every(d=>Number.isInteger(d)&&d>=0&&d<=6))
             && (task.repeat.kind!=='after'||Number.isInteger(task.repeat.interval)&&task.repeat.interval!>0&&task.repeat.interval!<=365)
@@ -81,6 +84,6 @@ export function readTaskChecks(content:string, task:DailyTask):DailyTask {
     const lines=content.slice(start,end).split(/\r?\n/);
     const main=lines.find(l=>/^- \[[ xX]\] /.test(l));
     if(!main)return task;
-    const subtasks=lines.filter(l=>/^ {2}- \[[ xX]\] /.test(l)).map((l,i)=>{const date=l.match(/ \[date:: (\d{4}-\d{2}-\d{2})\]$/);return {...task.subtasks[i],text:date?l.slice(8,-date[0].length):l.slice(8),...(date?{date:date[1]}:{}),checked:l[5]?.toLowerCase()==='x'};});
+    const subtasks=lines.filter(l=>/^ {2}- \[[ xX]\] /.test(l)).map(l=>{const date=l.match(/ \[date:: (\d{4}-\d{2}-\d{2})\]$/);return {text:date?l.slice(8,-date[0].length):l.slice(8),...(date?{date:date[1]}:{}),checked:l[5]?.toLowerCase()==='x'};});
     return {...task,name:main.slice(6),done:main[3]?.toLowerCase()==='x',subtasks};
 }

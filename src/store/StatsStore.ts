@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
 import { App, moment } from 'obsidian';
 import type HabitTimerPlugin from '../main';
-import { getDailyNotes, SESSION_ROW_REGEX, parseDuration } from '../utils';
+import { getDailyNotes, readSessionRows } from '../utils';
 import { getHabitValueFromFrontmatter } from '../services/habit-service';
 import type { HabitDayState, HabitExplicitState } from '../types';
 import {
@@ -60,27 +60,10 @@ export async function reloadStatsData(app: App, plugin: HabitTimerPlugin) {
     for (const file of files) {
         const dateStr = file.basename;
         const content = await app.vault.cachedRead(file);
-        const lines = content.split('\n');
         const dailySessions: Record<string, SessionRecord[]> = {};
-
-        for (const line of lines) {
-            const m = line.match(SESSION_ROW_REGEX);
-            if (m && m[1] && m[2] && m[3]) {
-                const startHour = parseInt(m[1]);
-                const startTime = line.match(/\|\s*(\d{2}):(\d{2})\s*-/);
-                const startTimeMinutes = startTime ? Number(startTime[1]) * 60 + Number(startTime[2]) : startHour * 60;
-                const rawHabit = m[2].trim();
-                const parts = rawHabit.split(':');
-                const habitName = (parts[0] || rawHabit).trim();
-                const subTask = (parts[1] || "").trim();
-                const task = m[4] ? m[4].trim() : "";
-
-                const sec = parseDuration(m[3]);
-                if (sec > 0) {
-                    if (!dailySessions[habitName]) dailySessions[habitName] = [];
-                    dailySessions[habitName].push({ startHour, startTimeMinutes, durationSec: sec, subTask, task });
-                }
-            }
+        for (const {habit, startHour, startTimeMinutes, durationSec, subTask, task} of readSessionRows(content)) {
+            if (!dailySessions[habit]) dailySessions[habit] = [];
+            dailySessions[habit].push({ startHour, startTimeMinutes, durationSec, subTask, task });
         }
 
         const cache = app.metadataCache.getFileCache(file);

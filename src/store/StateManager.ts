@@ -38,7 +38,9 @@ export class StateManager {
     public mediaItems = writable<MediaItem[]>([]);
 
     /** EventRefs for cleanup on destroy(). */
-    private eventRefs: EventRef[] = [];
+    private eventRefs: Array<{ emitter: App['vault'] | App['metadataCache']; ref: EventRef }> = [];
+    private destroyed = false;
+    private settingsSignature = '';
 
     /**
      * mtime-based parse cache: path → { mtime, item }.
@@ -54,17 +56,17 @@ export class StateManager {
     private initializeListeners() {
         // Store EventRefs so they can be properly offref'd in destroy()
         this.eventRefs.push(
-            this.app.metadataCache.on('changed', (file) => this.handleFileChange(file))
+            { emitter: this.app.metadataCache, ref: this.app.metadataCache.on('changed', (file) => this.handleFileChange(file)) }
         );
         this.eventRefs.push(
-            this.app.vault.on('delete', (file) => {
+            { emitter: this.app.vault, ref: this.app.vault.on('delete', (file) => {
                 if (file instanceof TFile) this.handleFileDelete(file);
-            })
+            }) }
         );
         this.eventRefs.push(
-            this.app.vault.on('rename', (file, oldPath) => {
+            { emitter: this.app.vault, ref: this.app.vault.on('rename', (file, oldPath) => {
                 if (file instanceof TFile) this.handleFileRename(file, oldPath);
-            })
+            }) }
         );
         
         // Initial load
@@ -82,13 +84,21 @@ export class StateManager {
      * duplicate handlers accumulating across plugin reloads.
      */
     public destroy() {
-        for (const ref of this.eventRefs) {
-            this.app.metadataCache.offref(ref);
+        this.destroyed = true;
+        for (const { emitter, ref } of this.eventRefs) {
+            emitter.offref(ref);
         }
         this.eventRefs = [];
+        this.parseCache.clear();
     }
     
     public refreshAllMedia() {
+        if (this.destroyed) return;
+        const signature = JSON.stringify([this.plugin.settings.mediaCollections, this.plugin.settings.libraryPropertyAliases]);
+        if (signature !== this.settingsSignature) {
+            this.parseCache.clear();
+            this.settingsSignature = signature;
+        }
         const files = this.app.vault.getMarkdownFiles();
         const items: MediaItem[] = [];
         

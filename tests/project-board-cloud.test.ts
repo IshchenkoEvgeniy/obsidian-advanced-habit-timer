@@ -3,7 +3,7 @@ import { sendTaskReminders } from '../cloudflare-companion/src/task-reminders';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { boardApi, syncBoard } from '../cloudflare-companion/src/project-board';
-import { finishTimer, startTimer, pauseTimer, resumeTimer, getTimer, setLibraryProgress, cancelTimer } from '../cloudflare-companion/src/db';
+import { addHabitValue, finishTimer, startTimer, pauseTimer, resumeTimer, getTimer, setLibraryProgress, cancelTimer } from '../cloudflare-companion/src/db';
 import { sessionHistoryApi } from '../cloudflare-companion/src/session-history';
 import { dailyTasksApi } from '../cloudflare-companion/src/daily-tasks';
 import type { BoardTask } from '../cloudflare-companion/src/project-board';
@@ -18,9 +18,11 @@ function database(){
  const wrap=(query:string,args:unknown[]=[])=>({bind:(...next:unknown[])=>wrap(query,next),
   first:async()=>sql.prepare(query).get(...args as never[])||null,
   all:async()=>({success:true,results:sql.prepare(query).all(...args as never[])}),
-  run:async()=>{sql.prepare(query).run(...args as never[]);return {success:true};}});
- const db={prepare:(q:string)=>wrap(q),batch:async(statements:Array<ReturnType<typeof wrap>>)=>{
-  sql.exec('BEGIN');try{const result=[];for(const s of statements)result.push(await s.run());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}
+  run:async()=>{const result=sql.prepare(query).run(...args as never[]);return {success:true,meta:{changes:Number(result.changes)}};}});
+ let batchChain:Promise<unknown>=Promise.resolve();
+ const db={prepare:(q:string)=>wrap(q),batch:(statements:Array<ReturnType<typeof wrap>>)=>{
+  const next=batchChain.then(async()=>{sql.exec('BEGIN');try{const result=[];for(const s of statements)result.push(await s.run());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}});
+  batchChain=next.catch(()=>undefined);return next;
  }} as unknown as D1Database;
  return {sql,db};
 }
@@ -29,6 +31,73 @@ const task:BoardTask={key:'work:one',id:'file:Task.md',scopeId:'work',scopeName:
 const config={timezone:'UTC',habits_json:JSON.stringify([{name:'Focus',type:'timer'}])} as CompanionConfigRow;
 const request=(body:unknown)=>new Request('https://example.com/app/api/projects',{method:'POST',body:JSON.stringify(body)});
 describe('Cloud project board',()=>{
+ it('rejects malformed daily task API bodies with a client error',async()=>{
+  const {sql,db}=database();
+  try{
+   for(const body of [null,[],{task:null}])expect((await dailyTasksApi(request(body),{DB:db} as Env,'p',config)).status).toBe(400);
+   const invalid=new Request('https://example.com/app/api/tasks',{method:'POST',body:'{'});
+   expect((await dailyTasksApi(invalid,{DB:db} as Env,'p',config)).status).toBe(400);
+  }finally{sql.close();}
+ });
+ it('finishes a cloud session exactly once under concurrent requests',async()=>{
+  const {sql,db}=database();
+  try{
+   await startTimer(db,'p','Focus',null,'12:00');
+   sql.prepare('UPDATE active_timers SET started_at=?').run(Date.now()-60000);
+   const results=await Promise.all([finishTimer(db,'p','2026-10-04','12:01'),finishTimer(db,'p','2026-10-04','12:01')]);
+   expect(results.filter(Boolean)).toHaveLength(1);
+   expect(sql.prepare('SELECT value FROM habit_values').get()!.value).toBe(60);
+   expect(sql.prepare('SELECT * FROM session_history').all()).toHaveLength(1);
+   expect(sql.prepare('SELECT * FROM companion_events').all()).toHaveLength(1);
+   const history:unknown=JSON.parse(String(sql.prepare('SELECT data_json FROM session_history').get()!.data_json));
+   expect(history).toMatchObject({date:'2026-10-04',endTime:'12:01'});
+  }finally{sql.close();}
+ });
+ it('clamps an atomic count decrement to zero',async()=>{
+  const {sql,db}=database();
+  try{
+   await addHabitValue(db,'p','Count','2026-10-04',5,'add_count');
+   await addHabitValue(db,'p','Count','2026-10-04',-8,'add_count');
+   expect(sql.prepare('SELECT value FROM habit_values').get()!.value).toBe(0);
+  }finally{sql.close();}
+ });
+ it('preserves both concurrent habit increments',async()=>{
+  const {sql,db}=database();
+  try{
+   await Promise.all([addHabitValue(db,'p','Focus','2026-10-04',30,'add_timer'),addHabitValue(db,'p','Focus','2026-10-04',60,'add_timer')]);
+   expect(sql.prepare('SELECT value FROM habit_values').get()!.value).toBe(90);
+  }finally{sql.close();}
+ });
+ it('accepts exactly one concurrent timer start without a database exception',async()=>{
+  const {sql,db}=database();
+  try{expect(await Promise.all([startTimer(db,'p','Focus',null,'12:00'),startTimer(db,'p','Focus',null,'12:00')])).toEqual([true,false]);}
+  finally{sql.close();}
+ });
+ it('does not reset elapsed time when a running cloud timer is resumed again',async()=>{
+  const {sql,db}=database();
+  try{
+   await startTimer(db,'p','Focus',null,'12:00');
+   sql.prepare('UPDATE active_timers SET started_at=?').run(Date.now()-60000);
+   const before=(await getTimer(db,'p'))!.started_at;
+   await resumeTimer(db,'p');expect((await getTimer(db,'p'))!.started_at).toBe(before);
+  }finally{sql.close();}
+ });
+ it('retains the active timer if recording completion fails, and retries without duplicates',async()=>{
+  const {sql,db}=database();
+  try{
+   await startTimer(db,'p','Focus',null,'12:00');
+   sql.prepare('UPDATE active_timers SET started_at=?').run(Date.now()-60000);
+   sql.exec("CREATE TRIGGER fail_event BEFORE INSERT ON companion_events BEGIN SELECT RAISE(ABORT,'write failed'); END");
+   await expect(finishTimer(db,'p','2026-10-04','12:01')).rejects.toThrow('write failed');
+   expect(await getTimer(db,'p')).not.toBeNull();
+   expect(sql.prepare('SELECT * FROM session_history').all()).toHaveLength(0);
+   expect(sql.prepare('SELECT * FROM habit_values').all()).toHaveLength(0);
+   sql.exec('DROP TRIGGER fail_event');
+   expect(await finishTimer(db,'p','2026-10-04','12:01')).not.toBeNull();
+   expect(await finishTimer(db,'p','2026-10-04','12:01')).toBeNull();
+   expect(sql.prepare('SELECT * FROM session_history').all()).toHaveLength(1);
+  }finally{sql.close();}
+ });
  it('sends a scheduled task reminder once across cron retries',async()=>{
   const {sql,db}=database();const task={id:crypto.randomUUID(),name:'Reminder',date:'2026-09-08',done:false,reminderTime:'10:00'};
   sql.prepare('INSERT INTO daily_tasks VALUES(?,?,?,?)').run('p',task.id,1,JSON.stringify(task));

@@ -1,4 +1,4 @@
-import { setIcon } from 'obsidian';
+import { ItemView, setIcon } from 'obsidian';
 import { get } from 'svelte/store';
 import type HabitTimerPlugin from '../main';
 import { activeTab } from '../store/TimerStore';
@@ -21,7 +21,7 @@ export class FloatingTimer {
     mount(): void {
         if (this.root) return;
         const ru = this.plugin.settings.language === 'ru';
-        const doc = this.plugin.app.workspace.activeLeaf?.view.containerEl.ownerDocument || document;
+        const doc = this.plugin.app.workspace.getActiveViewOfType(ItemView)?.containerEl.ownerDocument || document;
         const root = doc.body.createDiv({ cls: 'fl-floating-timer' });
         root.setAttribute('role', 'status');
         root.setAttribute('aria-label', ru ? 'Работающий таймер' : 'Running timer');
@@ -62,7 +62,7 @@ export class FloatingTimer {
 
     private syncDocument(): void {
         if (!this.root) return;
-        const doc = this.plugin.app.workspace.activeLeaf?.view.containerEl.ownerDocument || document;
+        const doc = this.plugin.app.workspace.getActiveViewOfType(ItemView)?.containerEl.ownerDocument || document;
         if (this.root.ownerDocument !== doc) doc.body.appendChild(this.root);
         this.bindWindow(doc.defaultView);
         this.clampPosition();
@@ -82,12 +82,13 @@ export class FloatingTimer {
         if (!this.root || !this.timeEl || !this.labelEl) return;
         const active = this.plugin.settings.activeTimer;
         const running = Boolean(active && active.timerState !== 'paused');
-        const timerScreenVisible = this.plugin.app.workspace.activeLeaf?.view.getViewType() === VIEW_TYPE_TIMER
+        const timerScreenVisible = this.plugin.app.workspace.getActiveViewOfType(ItemView)?.getViewType() === VIEW_TYPE_TIMER
             && get(activeTab) === 'timer';
         this.root.classList.toggle('is-visible', running && !timerScreenVisible);
         if (!active || !running) return;
         const delta = active.lastStartedAt ? Math.max(0, Math.floor((Date.now() - active.lastStartedAt) / 1000)) : 0;
-        const elapsed = Math.max(0, active.elapsedSeconds || 0) + delta;
+        const countedDelta = active.mode === 'pm' ? Math.min(delta, Math.max(0, active.remainingSeconds ?? this.plugin.settings.pomodoroDuration * 60)) : delta;
+        const elapsed = Math.max(0, active.elapsedSeconds || 0) + countedDelta;
         this.timeEl.setText(this.plugin.formatTime(elapsed));
         this.labelEl.setText(active.taskName || active.habitName);
     }
@@ -95,10 +96,13 @@ export class FloatingTimer {
     private restorePosition(): void {
         if (!this.root) return;
         try {
-            const saved = JSON.parse(localStorage.getItem(POSITION_KEY) || 'null');
-            if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) {
-                this.setPosition(saved.x, saved.y);
-                return;
+            const saved: unknown = typeof this.plugin.app.loadLocalStorage === 'function'
+                ? this.plugin.app.loadLocalStorage(POSITION_KEY) : this.plugin.settings.floatingTimerPosition;
+            if (saved && typeof saved === 'object' && 'x' in saved && 'y' in saved) {
+                if (typeof saved.x === 'number' && typeof saved.y === 'number' && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+                    this.setPosition(saved.x, saved.y);
+                    return;
+                }
             }
         } catch { /* Ignore invalid local UI preference. */ }
         const win = this.root.ownerDocument.defaultView || window;
@@ -136,9 +140,14 @@ export class FloatingTimer {
         if (!this.drag || this.drag.pointerId !== event.pointerId || !this.root) return;
         this.drag = null;
         try {
-            localStorage.setItem(POSITION_KEY, JSON.stringify({
+            const position = {
                 x: parseFloat(this.root.style.left), y: parseFloat(this.root.style.top)
-            }));
+            };
+            if (typeof this.plugin.app.saveLocalStorage === 'function') this.plugin.app.saveLocalStorage(POSITION_KEY, position);
+            else {
+                this.plugin.settings.floatingTimerPosition = position;
+                void this.plugin.saveSettings().catch(() => undefined);
+            }
         } catch { /* Position persistence is optional. */ }
     };
 }

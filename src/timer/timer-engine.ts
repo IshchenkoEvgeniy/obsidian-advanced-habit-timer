@@ -26,6 +26,7 @@ export class TimerEngine {
 
     async start(notifyTelegram = true): Promise<void> {
         if (this.timerInterval !== null) return;
+        if (this.plugin.settings.activeTimer?.pendingCommit) return;
 
         const mode = get(timerMode);
         let currentSeconds = get(timerSeconds);
@@ -61,9 +62,10 @@ export class TimerEngine {
         const now = Date.now();
         const previousTimer = this.plugin.settings.activeTimer;
         this.plugin.settings.activeTimer = {
+            sessionId: previousTimer?.sessionId || crypto.randomUUID(),
             path: activeFile.path,
             habitName: habit,
-            subTask: taskFile ? undefined : subTask,
+            subTask: subTask || undefined,
             mode,
             startTime,
             bookPath: book || undefined,
@@ -91,6 +93,7 @@ export class TimerEngine {
     }
 
     async pause(): Promise<void> {
+        if (this.timerInterval !== null) this.advanceClock(Date.now());
         this.clearInterval();
         isRunning.set(false);
         this.view.musicPlayer.pause();
@@ -138,15 +141,17 @@ export class TimerEngine {
         if (!activeTimer) return;
 
         const now = Date.now();
+        const finished = this.timerInterval !== null && this.advanceClock(now);
+        const snapshotTime = this.timerInterval !== null ? this.lastTickTime : now;
         activeTimer.timerState = state;
         activeTimer.elapsedSeconds = this.getElapsedSeconds();
         activeTimer.remainingSeconds = get(timerMode) === 'pm' ? get(timerSeconds) : undefined;
-        activeTimer.lastStartedAt = state === 'running' ? now : undefined;
+        activeTimer.lastStartedAt = state === 'running' ? snapshotTime : undefined;
         await this.plugin.saveSettings();
 
         const file = this.app.vault.getAbstractFileByPath(activeTimer.path);
-        if (file instanceof TFile) await this.writeTimerFrontmatter(file, state, now);
-        if (state === 'running') this.lastTickTime = now;
+        if (file instanceof TFile) await this.writeTimerFrontmatter(file, state, snapshotTime);
+        if (finished && state === 'running') this.scheduleFinish();
     }
 
     async saveTimerSettings(): Promise<void> {
@@ -191,13 +196,17 @@ export class TimerEngine {
         selectedSubTask.set(activeTimer.subTask || '');
         selectedBook.set(activeTimer.bookPath || '');
 
-        const isDailyNote = settings.dailyNotesFolder
-            ? file.path.startsWith(settings.dailyNotesFolder) && /^\d{4}-\d{2}-\d{2}$/.test(file.basename)
-            : /^\d{4}-\d{2}-\d{2}$/.test(file.basename);
-        if (!isDailyNote) {
+        const folder = settings.dailyNotesFolder.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        const isDailyNote = file.path === `${folder ? folder + '/' : ''}${file.basename}.md`
+            && /^\d{4}-\d{2}-\d{2}$/.test(file.basename);
+        if (activeTimer.taskName || !isDailyNote) {
             activeProjectTaskFile.set(file);
             activeProjectTaskName.set(activeTimer.taskName || null);
             isSingleFileTask.set(Boolean(activeTimer.isSingleFileTask));
+        } else {
+            activeProjectTaskFile.set(null);
+            activeProjectTaskName.set(null);
+            isSingleFileTask.set(false);
         }
 
         timerSeconds.set(recoverTimerSeconds(
@@ -224,21 +233,24 @@ export class TimerEngine {
     }
 
     private tick(): void {
-        const now = Date.now();
-        const diff = Math.floor((now - this.lastTickTime) / 1000);
-        if (diff < 1) return;
-        this.lastTickTime += diff * 1000;
+        if (this.advanceClock(Date.now())) this.scheduleFinish();
+    }
 
-        timerSeconds.update(seconds => {
-            if (get(timerMode) !== 'pm') return seconds + diff;
-            const next = Math.max(0, seconds - diff);
-            if (seconds > 0 && next === 0) {
-                window.setTimeout(() => {
-                    void this.pause().then(() => this.view.save());
-                }, 0);
-            }
-            return next;
-        });
+    private scheduleFinish(): void {
+        window.setTimeout(() => {
+            void this.pause().then(() => this.view.save());
+        }, 0);
+    }
+
+    private advanceClock(now: number): boolean {
+        const diff = Math.floor((now - this.lastTickTime) / 1000);
+        if (diff < 1) return false;
+        this.lastTickTime += diff * 1000;
+        const seconds = get(timerSeconds);
+        const isPm = get(timerMode) === 'pm';
+        const next = isPm ? Math.max(0, seconds - diff) : seconds + diff;
+        timerSeconds.set(next);
+        return isPm && seconds > 0 && next === 0;
     }
 
     private clearInterval(): void {

@@ -484,7 +484,7 @@ export default class HabitTimerPlugin extends Plugin {
         } = {}
     ): Promise<boolean> {
         const prop = this.settings.properties.find(p => p.name === habitName);
-        if (!prop) {
+        if (!prop || (prop.type || 'timer') !== 'timer') {
             new Notice(this.settings.language === 'ru'
                 ? `Привычка «${habitName}» не найдена в настройках.`
                 : `Habit “${habitName}” was not found in settings.`);
@@ -492,7 +492,7 @@ export default class HabitTimerPlugin extends Plugin {
         }
 
         if (context.openView === false) {
-            return this.timerSessions.start({
+            const started = await this.timerSessions.start({
                 habitName,
                 mode: context.mode,
                 subTask: context.subTask,
@@ -501,6 +501,11 @@ export default class HabitTimerPlugin extends Plugin {
                 taskName: context.taskName,
                 isSingleFileTask: context.isSingleFileTask
             });
+            if (started && this.persistentTimerEngine) {
+                this.persistentTimerEngine.suspend();
+                await this.persistentTimerEngine.recoverActiveTimer(true);
+            }
+            return started;
         }
 
         if (this.settings.activeTimer) {
@@ -534,17 +539,18 @@ export default class HabitTimerPlugin extends Plugin {
 
         // Use the Svelte store to set the habit, then start via the engine
         const {
-            selectedHabit, selectedBook, activeProjectTaskFile, activeProjectTaskName, isSingleFileTask, timerMode
+            selectedHabit, selectedBook, selectedSubTask, activeProjectTaskFile, activeProjectTaskName, isSingleFileTask, timerMode
         } = await import('./store/TimerStore');
         await timerView.engine.reset();
         selectedHabit.set(habitName);
+        selectedSubTask.set(context.subTask || '');
         if (context.mode) timerMode.set(context.mode);
         selectedBook.set(context.bookPath || '');
         activeProjectTaskFile.set(context.taskFile || null);
         activeProjectTaskName.set(context.taskName || null);
         isSingleFileTask.set(Boolean(context.isSingleFileTask));
         await timerView.engine.start();
-        return true;
+        return Boolean(this.settings.activeTimer);
     }
 
     getTimerHabitForMedia(item: Pick<MediaItem, 'collectionId'>) {

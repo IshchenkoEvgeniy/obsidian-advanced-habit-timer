@@ -150,8 +150,7 @@ export class MusicPlayer {
     private hideHost(): void {
         if (!this.hostEl) return;
         this.hostEl.removeClass('is-visible');
-        this.hostEl.style.left = '-10000px';
-        this.hostEl.style.top = '0px';
+        this.hostEl.setCssStyles({ left: '-10000px', top: '0px' });
         this.hostEl.setAttribute('aria-hidden', 'true');
     }
 
@@ -217,7 +216,7 @@ export class MusicPlayer {
             cls: 'music-youtube-frame',
             attr: { title: 'YouTube music player', allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: 'true' }
         });
-        this.iframeEl.style.display = 'none';
+        this.iframeEl.setCssStyles({ display: 'none' });
         this.iframeEl.onload = () => {
             if (this.sourceKind === 'youtube' && this.youtubeShouldPlay) this.youtubeCommand('playVideo');
         };
@@ -322,7 +321,7 @@ export class MusicPlayer {
         if (this.nextBtn) this.nextBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
         if (this.modeBtn) this.modeBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
         if (this.playlistToggleBtn) this.playlistToggleBtn.disabled = this.sourceKind !== 'folder' || !this.playlistFiles.length;
-        if (this.playlistContainer && this.sourceKind !== 'folder') this.playlistContainer.style.display = 'none';
+        if (this.playlistContainer && this.sourceKind !== 'folder') this.playlistContainer.setCssStyles({ display: 'none' });
     }
 
     private stopCurrentPlayback(): void {
@@ -330,7 +329,7 @@ export class MusicPlayer {
         this.audioPlayer.removeAttribute('src');
         this.audioPlayer.load();
         if (this.iframeEl) {
-            this.iframeEl.style.display = 'none';
+            this.iframeEl.setCssStyles({ display: 'none' });
             if (this.iframeEl.src && this.iframeEl.src !== 'about:blank') this.iframeEl.src = 'about:blank';
         }
         this.currentMusicFolder = '';
@@ -358,7 +357,7 @@ export class MusicPlayer {
                     const params = new URLSearchParams({ enablejsapi: '1', autoplay: '0', controls: '1' });
                     if (origin?.startsWith('http://') || origin?.startsWith('https://')) params.set('origin', origin);
                     this.iframeEl.src = `https://www.youtube.com/embed/${videoId}?${params}`;
-                    this.iframeEl.style.display = 'block';
+                    this.iframeEl.setCssStyles({ display: 'block' });
                 } else {
                     this.audioPlayer.src = streamUrl;
                 }

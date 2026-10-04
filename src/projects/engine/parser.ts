@@ -6,6 +6,10 @@ import { blockIdFromTaskLine, taskDisplayTitle, virtualTaskId } from './task-ide
 import { GITHUB_IMPORT_SECTION } from '../native-checklist';
 import { getCommunityPlugin, getDataviewApi } from '../community-plugins';
 
+function scopeFolder(value: string): string {
+    return value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
 export class ProjectParser {
     constructor(private app: App, private cache: ProjectCache) {}
 
@@ -74,7 +78,7 @@ export class ProjectParser {
         return found || { lineIdx: -1, indent: 0, checked: false };
     }
 
-    async loadTasks(scope: ProjectScopeDefinition): Promise<ProjectTask[]> {
+    async loadTasks(scope: ProjectScopeDefinition, requireSource = false): Promise<ProjectTask[]> {
         const statuses = scope.statuses.split(',').map(s => s.trim()).filter(Boolean);
         const columns = statuses.length > 0 ? statuses : ['Backlog', 'To Do', 'In Progress', 'Done'];
         const excludePatterns = scope.excludePatterns || '';
@@ -88,8 +92,8 @@ export class ProjectParser {
                 : list;
 
         if (scope.sourceType === 'folder') {
-            const folderPath = scope.sourceValue.trim().replace(/\/$/, '');
-            files = applyExclude(allFiles.filter(f => f.path === folderPath || f.path.startsWith(`${folderPath}/`)));
+            const folderPath = scopeFolder(scope.sourceValue);
+            files = applyExclude(allFiles.filter(f => !folderPath || f.path.startsWith(`${folderPath}/`)));
             return this.parseSeparateFiles(files, columns, scope);
         } else if (scope.sourceType === 'tag') {
             const tagToFind = scope.sourceValue.trim().toLowerCase();
@@ -104,7 +108,7 @@ export class ProjectParser {
                     if (Array.isArray(tags)) {
                         if (tags.some(t => ('#' + String(t).replace(/^#/, '')).toLowerCase() === cleanTag)) return true;
                     } else if (typeof tags === 'string') {
-                        if (tags.toLowerCase().includes(cleanTag) || tags.toLowerCase().includes(cleanTag.replace(/^#/, ''))) return true;
+                        if (tags.split(/[\s,]+/).some(tag => ('#' + tag.replace(/^#/, '')).toLowerCase() === cleanTag)) return true;
                     }
                 }
                 return false;
@@ -120,10 +124,12 @@ export class ProjectParser {
                         .filter((path): path is string => typeof path === 'string');
                     files = allFiles.filter(f => paths.includes(f.path));
                 } catch (error: unknown) {
+                    if (requireSource) throw error;
                     const message = error instanceof Error ? error.message : String(error);
                     new Notice('Error in Dataview query: ' + message);
                 }
             } else {
+                if (requireSource) throw new Error('Dataview plugin is required for this scope');
                 new Notice("Dataview plugin is required for this scope!");
             }
             files = applyExclude(files);
@@ -134,6 +140,7 @@ export class ProjectParser {
             if (hubFile && hubFile instanceof TFile) {
                 return this.parseSingleFile(hubFile, columns, scope);
             } else {
+                if (requireSource) throw new Error(`Project source file missing: ${filePath}`);
                 return [];
             }
         }
@@ -212,7 +219,7 @@ export class ProjectParser {
                 priority: getStringOpt(fm['priority'])?.toLowerCase(),
                 archived: fm['project_archived'] === true,
                 section: scope.sourceType === 'folder'
-                    ? file.path.slice(scope.sourceValue.trim().replace(/\/$/, '').length + 1).split('/').slice(0, -1).join('/') || undefined
+                    ? file.path.slice(scopeFolder(scope.sourceValue) ? scopeFolder(scope.sourceValue).length + 1 : 0).split('/').slice(0, -1).join('/') || undefined
                     : undefined,
                 order: getNumber(fm['order'], 0),
                 images,

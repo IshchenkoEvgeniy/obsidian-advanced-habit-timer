@@ -1,5 +1,6 @@
 import type { Language } from './i18n';
 import type { ProjectScopeDefinition } from './projects/types';
+import type { PendingTimerCommit } from './timer/timer-session-persistence';
 export type { ProjectScopeDefinition };
 
 export type MediaType = string;
@@ -107,6 +108,8 @@ export interface HabitTimerSettings {
     projectsFolder: string;
     projectsStatuses: string;
     activeTimer?: {
+        sessionId?: string;
+        pendingCommit?: PendingTimerCommit;
         path: string;
         habitName: string;
         subTask?: string;
@@ -122,6 +125,7 @@ export interface HabitTimerSettings {
         targetSeconds?: number;
         source?: 'obsidian' | 'telegram';
     };
+    floatingTimerPosition?: { x: number; y: number };
     telegramBotToken: string;
     telegramChatId: string;
     telegramMorningEnabled: boolean;

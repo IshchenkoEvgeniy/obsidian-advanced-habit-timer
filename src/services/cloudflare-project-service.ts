@@ -7,6 +7,7 @@ import type { ProjectTask } from '../projects/types';
 import { findTaskBlockEnd } from '../projects/engine/task-block';
 import { parseDuration } from '../utils';
 import type { Frontmatter } from '../utils/frontmatter';
+import { readWriteReceipt, writeReceipt } from './write-receipts';
 
 export class CloudflareProjectService {
  constructor(private plugin:HabitTimerPlugin){}
@@ -14,7 +15,7 @@ export class CloudflareProjectService {
   const items:BoardTask[]=[];
   const keys=this.plugin.settings.cloudflareProjectKeys||{};
   for(const scope of this.plugin.settings.projectScopes){
-   const tasks=await this.plugin.projectEngine.loadTasks(scope);
+   const tasks=await this.plugin.projectEngine.loadTasks(scope,true);
    for(const task of tasks){
     const identity=`${scope.id}:${task.id}`;
     const key=Object.keys(keys).find(k=>keys[k]===identity)||identity;
@@ -25,7 +26,7 @@ export class CloudflareProjectService {
   }
   return items.sort((a,b)=>a.key.localeCompare(b.key));
  }
- async apply(payload:{action?:string;task:BoardTask;previous?:BoardTask;seconds?:number},timer=false):Promise<void>{
+ async apply(payload:{action?:string;task:BoardTask;previous?:BoardTask;seconds?:number},timer=false,eventId=''):Promise<void>{
   const incoming=payload.task;
   const scope=this.plugin.settings.projectScopes.find(s=>s.id===incoming.scopeId);
   if(!scope)throw new Error(`Project scope missing: ${incoming.scopeId}`);
@@ -58,17 +59,23 @@ export class CloudflareProjectService {
   if(payload.action==='delete'){await engine.deleteTask(task,single);delete keys[incoming.key];return;}
   if(timer){
    const seconds=Math.max(0,Math.round(payload.seconds||0));
+   const marker=eventId?`<!-- companion-project-timer:${eventId} -->`:'';
    if(single){
     await this.plugin.app.vault.process(task.file,content=>{
+     if(marker&&content.includes(marker))return content;
      const lines=content.split('\n');
      const index=task.blockId?lines.findIndex(line=>line.trimEnd().endsWith(` ^${task.blockId}`)):task.sourceLine??-1;
      if(index<0||!lines[index])throw new Error('Task block missing');
      const current=lines[index].match(/⏱️\s*(\d+:\d+(?::\d+)?)/)?.[1]||'00:00:00';
      const tag=`⏱️ ${this.plugin.formatTime(parseDuration(current)+seconds)}`;
      lines[index]=/⏱️\s*\d+:\d+(?::\d+)?/.test(lines[index])?lines[index].replace(/⏱️\s*\d+:\d+(?::\d+)?/,tag):lines[index].replace(/(\s+\^[\w-]+)?$/,` ${tag}$1`);
-     return lines.join('\n');
+     return marker?`${lines.join('\n').trimEnd()}\n\n${marker}\n`:lines.join('\n');
     });
-   }else await this.plugin.app.fileManager.processFrontMatter(task.file,(fm:Frontmatter)=>{fm.time_spent=this.plugin.formatTime(parseDuration(fm.time_spent||'00:00:00')+seconds);});
+   }else await this.plugin.app.fileManager.processFrontMatter(task.file,(fm:Frontmatter)=>{
+    if(eventId&&readWriteReceipt(fm,`cloud:${eventId}`))return;
+    fm.time_spent=this.plugin.formatTime(parseDuration(fm.time_spent||'00:00:00')+seconds);
+    if(eventId)writeReceipt(fm,`cloud:${eventId}`);
+   });
   }else{
    if(!single&&incoming.name!==task.name){
     const destination=`${task.file.parent?.path}/${incoming.name}.md`;

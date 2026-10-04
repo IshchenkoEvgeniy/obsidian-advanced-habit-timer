@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { parseDuration, formatDuration } from '../src/utils';
+import { parseDuration, formatDuration, getDailyNotes } from '../src/utils';
+import { TFile } from 'obsidian';
+
+describe('daily note folder filtering', () => {
+    it('excludes folders whose names merely start with the configured folder', () => {
+        const daily = new TFile('Daily/2026-10-04.md');
+        const archive = new TFile('Daily Archive/2026-10-04.md');
+        const app = { vault: { getMarkdownFiles: () => [daily, archive] } };
+        expect(getDailyNotes(app as never, 'Daily')).toEqual([daily]);
+        expect(getDailyNotes(app as never, ' Daily/ ')).toEqual([daily]);
+    });
+});
 
 describe('parseDuration', () => {
     // ── happy path ────────────────────────────────────────────────────────────

@@ -1,16 +1,18 @@
 import type { D1Database, TimerRow, Env } from './types';
 import { zonedParts } from './time';
+import { timerWriteGuard } from './timer-guard';
 
-export async function recordSession(db:D1Database,profile:string,timer:TimerRow,elapsed:number,status:string,note=''):Promise<string>{
+export async function prepareSession(db:D1Database,profile:string,timer:TimerRow,elapsed:number,status:string,note='',date?:string,endTime?:string){
  const id=timer.session_id||crypto.randomUUID();
  const media=timer.media_id?await db.prepare('SELECT id,title,item_path,unit,progress,total FROM library_items WHERE profile_id=? AND id=?').bind(profile,timer.media_id).first():null;
  let task:unknown=null;try{task=timer.task_json?JSON.parse(timer.task_json):null;}catch{/* Ignore malformed task_json. */}
  const config=await db.prepare('SELECT timezone FROM companion_config WHERE profile_id=?').bind(profile).first<{timezone:string}>();
  const local=zonedParts(Date.now(),config?.timezone||'UTC');
- await db.prepare(`INSERT OR IGNORE INTO session_history(profile_id,id,started_at,ended_at,habit_name,duration_sec,status,data_json)
- VALUES(?,?,?,?,?,?,?,?)`).bind(profile,id,timer.original_started_at||null,Date.now(),timer.habit_name,elapsed,status,
- JSON.stringify({media,task,startTime:timer.start_time,endTime:local.time,targetSeconds:timer.target_seconds,note,date:local.date})).run();
- return id;
+ const guard=timerWriteGuard(profile,timer);
+ const statement=db.prepare(`INSERT OR IGNORE INTO session_history(profile_id,id,started_at,ended_at,habit_name,duration_sec,status,data_json)
+ SELECT ?,?,?,?,?,?,?,? WHERE ${guard.sql}`).bind(profile,id,timer.original_started_at||null,Date.now(),timer.habit_name,elapsed,status,
+ JSON.stringify({media,task,startTime:timer.start_time,endTime:endTime||local.time,targetSeconds:timer.target_seconds,note,date:date||local.date}),...guard.values);
+ return {id,statement};
 }
 
 // Columns of the `sessions` UNION in sessionHistoryApi (session_history rows + legacy companion_events rows).

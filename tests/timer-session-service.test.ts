@@ -1,6 +1,8 @@
 import { writable } from 'svelte/store';
 import { TFile } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LIBRARY_PROPERTY_ALIASES } from '../src/types';
+import { formatDuration } from '../src/utils';
 import { TimerSessionService } from '../src/timer/timer-session-service';
 
 function createHarness() {
@@ -18,7 +20,7 @@ function createHarness() {
             telegramLiveNotifications: false,
             mediaCollections: [],
             language: 'en',
-            libraryPropertyAliases: {}
+            libraryPropertyAliases: DEFAULT_LIBRARY_PROPERTY_ALIASES
         },
         app: {
             vault: {
@@ -69,10 +71,60 @@ function createHarness() {
         formatTime: vi.fn((seconds: number) => `seconds:${seconds}`),
         telegram: { send: vi.fn(async () => true) }
     };
-    return { plugin, daily, book, frontmatter, contents };
+    return { plugin, daily, book, files, frontmatter, contents };
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('TimerSessionService', () => {
+    it('accounts for both media and project work when they use the same note',async()=>{
+        const {plugin,book,frontmatter,contents}=createHarness();
+        plugin.formatTime.mockImplementation(formatDuration);
+        const service=new TimerSessionService(plugin as never);
+        vi.spyOn(Date,'now').mockReturnValue(1_000_000);
+        await service.start({habitName:'Read',mediaPath:book.path,taskPath:book.path,taskName:'Example'});
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        await service.finish({progressAdded:5});
+        expect(frontmatter.get(book.path)?.['Reading time']).toBe('00:01:00');
+        expect(frontmatter.get(book.path)?.time_spent).toBe('00:01:00');
+        expect(contents.get(book.path)).toContain('| 5 |');
+    });
+    it('retries a partially written session after reload without adding time twice', async () => {
+        const { plugin, daily, frontmatter, contents } = createHarness();
+        plugin.formatTime.mockImplementation(formatDuration);
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read' });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        plugin.app.vault.process.mockRejectedValueOnce(new Error('disk failure'));
+        await expect(service.finish({note:'Original note'})).rejects.toThrow('disk failure');
+        expect(frontmatter.get(daily.path)?.Read).toBe('00:01:00');
+        const reloaded = new TimerSessionService(plugin as never);
+        await reloaded.finish({note:'Changed on retry'});
+        expect(frontmatter.get(daily.path)?.Read).toBe('00:01:00');
+        expect(contents.get(daily.path)).toContain('Original note');
+        expect(contents.get(daily.path)).not.toContain('Changed on retry');
+    });
+
+    it('retries media logging without adding progress or reading time twice', async () => {
+        const { plugin, book, daily, frontmatter, contents } = createHarness();
+        plugin.formatTime.mockImplementation(formatDuration);
+        frontmatter.set(book.path,{Progress:98,Total:100});
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({habitName:'Read',mediaPath:book.path});
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        plugin.app.vault.process.mockRejectedValueOnce(new Error('disk failure'));
+        await expect(service.finish({progressAdded:10})).rejects.toThrow('disk failure');
+        expect(await service.resume()).toBe(false);
+        const result=await new TimerSessionService(plugin as never).finish({progressAdded:1});
+        expect(result?.savedProgress).toBe(2);
+        expect(frontmatter.get(book.path)?.['Reading time']).toBe('00:01:00');
+        expect(frontmatter.get(book.path)?.Progress).toBe(100);
+        expect(contents.get(daily.path)).toContain('| 2 |');
+        expect(contents.get(book.path)?.match(/\| 00:01:00 \|/g)).toHaveLength(1);
+    });
+
     it('starts, pauses, resumes and cancels without a TimerView', async () => {
         const { plugin, daily, frontmatter } = createHarness();
         const service = new TimerSessionService(plugin as never);
@@ -121,5 +173,99 @@ describe('TimerSessionService', () => {
         expect(frontmatter.get(daily.path)?.Read).toContain('seconds:');
         expect(contents.get(daily.path)).toContain('Focused reading');
         expect(plugin.updateDailyNoteProjectLog).toHaveBeenCalled();
+    });
+
+    it('caps an expired headless pomodoro at its remaining work time', async () => {
+        const { plugin } = createHarness();
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read', mode: 'pm' });
+        plugin.settings.activeTimer!.elapsedSeconds = 600;
+        plugin.settings.activeTimer!.remainingSeconds = 900;
+        vi.mocked(Date.now).mockReturnValue(4_600_000);
+        expect((await service.prepareFinish())?.elapsedSeconds).toBe(1500);
+        expect((await service.finish())?.durationSeconds).toBe(1500);
+    });
+
+    it('treats a legacy session without timerState as running', async () => {
+        const { plugin } = createHarness();
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read' });
+        delete plugin.settings.activeTimer!.timerState;
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        expect((await service.prepareFinish())?.elapsedSeconds).toBe(60);
+    });
+
+    it('accepts only one of two simultaneous start requests', async () => {
+        const { plugin } = createHarness();
+        const service = new TimerSessionService(plugin as never);
+        expect(await Promise.all([
+            service.start({ habitName: 'Read' }),
+            service.start({ habitName: 'Read' })
+        ])).toEqual([true, false]);
+    });
+
+    it('logs a session once when two finish requests arrive together', async () => {
+        const { plugin, contents, daily } = createHarness();
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read' });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        const results = await Promise.all([service.finish(), service.finish()]);
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect(contents.get(daily.path)?.match(/seconds:60/g)).toHaveLength(1);
+    });
+
+    it('logs the actual media progress after clamping to its total', async () => {
+        const { plugin, book, daily, frontmatter, contents } = createHarness();
+        frontmatter.set(book.path, { Progress: 98, Total: 100 });
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read', mediaPath: book.path });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        const result = await service.finish({ progressAdded: 10 });
+        expect(result?.savedProgress).toBe(2);
+        expect(contents.get(daily.path)).toContain('| 2 |');
+        expect(contents.get(daily.path)).not.toContain('| 10 |');
+    });
+
+    it('keeps new progress rows inside the media progress section', async () => {
+        const { plugin, book, frontmatter, contents } = createHarness();
+        frontmatter.set(book.path, { Progress: 12, Total: 100 });
+        contents.set(book.path, '### 📖 Progress\n| Date | Time | Progress | % | Notes |\n|---|---|---|---|---|\n\n## Review\nKeep this review\n');
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read', mediaPath: book.path });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        await service.finish({ progressAdded: 5 });
+        const content = contents.get(book.path)!;
+        expect(content.indexOf('seconds:60')).toBeLessThan(content.indexOf('## Review'));
+        expect(content).toContain('## Review\nKeep this review');
+    });
+
+    it('adds time to the exact checklist task and preserves its block anchor', async () => {
+        const { plugin, book, contents } = createHarness();
+        plugin.formatTime.mockImplementation(formatDuration);
+        contents.set(book.path, '- [ ] Task extended ^ht-other\n- [ ] **Task** ^ht-target\n');
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read', taskPath: book.path, taskName: 'Task', isSingleFileTask: true });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        await service.finish();
+        expect(contents.get(book.path)).toContain('- [ ] Task extended ^ht-other');
+        expect(contents.get(book.path)).toContain('- [ ] **Task** ⏱️ 00:01:00 ^ht-target');
+    });
+
+    it('retains the selected project subtask for headless saves', async () => {
+        const { plugin, book, contents } = createHarness();
+        plugin.formatTime.mockImplementation(formatDuration);
+        contents.set(book.path, '- [ ] Chapter one ⏱️ 00:01:00\n');
+        const service = new TimerSessionService(plugin as never);
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        await service.start({ habitName: 'Read', taskPath: book.path, taskName: 'Example', subTask: 'Chapter one' });
+        vi.mocked(Date.now).mockReturnValue(1_060_000);
+        await service.finish();
+        expect(contents.get(book.path)).toContain('- [ ] Chapter one ⏱️ 00:02:00');
     });
 });

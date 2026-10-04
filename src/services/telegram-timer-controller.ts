@@ -1,11 +1,8 @@
 import { moment, TFile } from 'obsidian';
 import type HabitTimerPlugin from '../main';
-import { formatDuration, getString, parseDuration } from '../utils';
-import {
-    getHabitDeferredAmountKey, getHabitDeferredToKey, getHabitStateKey
-} from '../habits/goals';
 import { TimerView, VIEW_TYPE_TIMER } from '../timer/timer-view';
 import { getTelegramTimerProgress } from './telegram-timer-state';
+import { commitTimerSession } from '../timer/timer-session-persistence';
 
 export interface TelegramTimerStatus {
     habitName: string;
@@ -20,7 +17,22 @@ export type TimerActionResult =
     | { ok: false; reason: 'active' | 'not-found' | 'not-running' | 'daily-note' | 'empty' | 'obsidian-session' };
 
 export class TelegramTimerController {
+    private operationChain: Promise<unknown> = Promise.resolve();
     constructor(private plugin: HabitTimerPlugin) {}
+
+    private serialize<T>(operation: () => Promise<T>): Promise<T> {
+        const next = this.operationChain.then(operation);
+        this.operationChain = next.catch(() => undefined);
+        return next;
+    }
+
+    start(habitName: string, targetMinutes?: number): Promise<TimerActionResult> {
+        return this.serialize(() => this.startSession(habitName, targetMinutes));
+    }
+    pause(): Promise<TimerActionResult> { return this.serialize(() => this.pauseSession()); }
+    resume(): Promise<TimerActionResult> { return this.serialize(() => this.resumeSession()); }
+    finish(): Promise<TimerActionResult> { return this.serialize(() => this.finishSession()); }
+    cancel(): Promise<TimerActionResult> { return this.serialize(() => this.cancelSession()); }
 
     getStatus(now = Date.now()): TelegramTimerStatus | null {
         const active = this.plugin.settings.activeTimer;
@@ -36,15 +48,17 @@ export class TelegramTimerController {
         };
     }
 
-    async start(habitName: string, targetMinutes?: number): Promise<TimerActionResult> {
+    private async startSession(habitName: string, targetMinutes?: number): Promise<TimerActionResult> {
         if (this.plugin.settings.activeTimer) return { ok: false, reason: 'active' };
         const prop = this.plugin.settings.properties.find(value => value.name === habitName);
         if (!prop || (prop.type || 'timer') !== 'timer') return { ok: false, reason: 'not-found' };
         const file = await this.plugin.dailyNotes.ensureNote(moment().format('YYYY-MM-DD'));
         if (!file) return { ok: false, reason: 'daily-note' };
+        if (this.plugin.settings.activeTimer) return { ok: false, reason: 'active' };
 
         const now = Date.now();
         this.plugin.settings.activeTimer = {
+            sessionId: crypto.randomUUID(),
             path: file.path,
             habitName,
             mode: 'timer',
@@ -61,7 +75,7 @@ export class TelegramTimerController {
         return { ok: true, status: this.getStatus() || undefined };
     }
 
-    async pause(): Promise<TimerActionResult> {
+    private async pauseSession(): Promise<TimerActionResult> {
         const active = this.plugin.settings.activeTimer;
         if (!active) return { ok: false, reason: 'not-running' };
         active.elapsedSeconds = this.elapsedSeconds();
@@ -74,9 +88,11 @@ export class TelegramTimerController {
         return { ok: true, status: this.getStatus() || undefined };
     }
 
-    async resume(): Promise<TimerActionResult> {
+    private async resumeSession(): Promise<TimerActionResult> {
         const active = this.plugin.settings.activeTimer;
         if (!active) return { ok: false, reason: 'not-running' };
+        if (active.pendingCommit) return { ok: false, reason: 'not-running' };
+        if ((active.timerState || 'running') === 'running') return { ok: true, status: this.getStatus() || undefined };
         active.timerState = 'running';
         active.lastStartedAt = Date.now();
         await this.plugin.saveSettings();
@@ -86,7 +102,7 @@ export class TelegramTimerController {
         return { ok: true, status: this.getStatus() || undefined };
     }
 
-    async finish(): Promise<TimerActionResult> {
+    private async finishSession(): Promise<TimerActionResult> {
         const active = this.plugin.settings.activeTimer;
         if (!active) return { ok: false, reason: 'not-running' };
         if (active.source !== 'telegram') return { ok: false, reason: 'obsidian-session' };
@@ -96,34 +112,28 @@ export class TelegramTimerController {
         const file = this.plugin.app.vault.getAbstractFileByPath(active.path);
         if (!(file instanceof TFile)) return { ok: false, reason: 'daily-note' };
         await this.suspendOpenView();
+        active.elapsedSeconds = elapsedSeconds;
+        active.timerState = 'paused';
+        active.lastStartedAt = undefined;
+        await this.plugin.saveSettings();
+        await this.writeTimerMetadata(file, 'paused', Date.now());
+        await commitTimerSession(this.plugin, {
+            dailyNote: file, habitName: active.habitName, displayProperty: active.habitName,
+            durationSeconds: elapsedSeconds, progressAdded: null, note: '', mediaPath: null,
+            mode: 'timer', logMode: 'Telegram', sessionStartTime: active.startTime
+        });
         await this.plugin.app.fileManager.processFrontMatter(file, frontmatter => {
             const fm = frontmatter as Record<string, unknown>;
-            const current = parseDuration(fm[active.habitName]);
-            fm[active.habitName] = formatDuration(current + elapsedSeconds);
-            delete fm[getHabitStateKey(active.habitName)];
-            delete fm[getHabitDeferredToKey(active.habitName)];
-            delete fm[getHabitDeferredAmountKey(active.habitName)];
             this.clearTimerMetadata(fm);
-        });
-
-        const start = active.startTime || moment().format('HH:mm');
-        const end = moment().format('HH:mm');
-        await this.plugin.app.vault.process(file, content => {
-            let next = content;
-            if (!next.includes('| Time | Mode | Property | Duration | Pages | Task |')) {
-                next = `${next.trimEnd()}\n\n### Session Log\n| Time | Mode | Property | Duration | Pages | Task |\n|---|---|---|---|---|---|\n`;
-            }
-            return `${next.trimEnd()}\n| ${start} - ${end} | Telegram | ${this.escapeCell(active.habitName)} | ${formatDuration(elapsedSeconds)} | - | - |\n`;
         });
 
         this.plugin.settings.activeTimer = undefined;
         await this.plugin.saveSettings();
         await this.resetOpenView();
-        await this.plugin.updateDailyNoteProjectLog(moment().format('YYYY-MM-DD'));
         return { ok: true, elapsedSeconds };
     }
 
-    async cancel(): Promise<TimerActionResult> {
+    private async cancelSession(): Promise<TimerActionResult> {
         const active = this.plugin.settings.activeTimer;
         if (!active) return { ok: false, reason: 'not-running' };
         await this.suspendOpenView();
@@ -199,7 +209,4 @@ export class TelegramTimerController {
         if (view) await view.refresh();
     }
 
-    private escapeCell(value: string): string {
-        return getString(value).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
-    }
 }

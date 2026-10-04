@@ -11,10 +11,11 @@ import { isDone } from '../utils/status';
 import { getHabitValueFromFrontmatter } from './habit-service';
 import { collectionsForHabit } from '../library/habit-links';
 import { collectionDailyGoal, collectionDailyGoalEnabled, collectionDailyGoalUnit, mediaProgressUnit } from '../library/daily-goals';
-import { mediaProgressForDate } from '../library/daily-media-progress';
+import { mediaProgressForDate, appendMediaProgressRow } from '../library/daily-media-progress';
 import { convertDailyProgress } from '../library/daily-goal-value';
 import { CloudflareCoverService } from './cloudflare-cover-service';
 import { CloudflareProjectService } from './cloudflare-project-service';
+import { readWriteReceipt, writeReceipt } from './write-receipts';
 
 interface CompanionEvent {
     sequence: number;
@@ -135,8 +136,8 @@ export class CloudflareCompanionService {
         this.syncing = true;
         try {
             await this.plugin.tasks?.sync();
-            const pulledLibraryEvents = await this.pullEvents();
-            await this.pushSnapshot(pulledLibraryEvents);
+            const pulledEvents = await this.pullEvents();
+            await this.pushSnapshot(pulledEvents);
             this.plugin.settings.cloudflareLastSyncAt = Date.now();
             this.plugin.settings.cloudflareLastSyncError = '';
             await this.plugin.saveSettings();
@@ -158,11 +159,10 @@ export class CloudflareCompanionService {
         if (!body.ok || !Array.isArray(body.events)) throw new Error(`Companion events request failed (${response.status})`);
         const applied = new Set(this.plugin.settings.cloudflareAppliedEventIds || []);
         let nextCursor = cursor;
-        let libraryChanged = false;
+        const localChanged = body.events.length > 0;
         for (const event of body.events) {
             if (!applied.has(event.event_id)) {
                 await this.applyEvent(event);
-                if (event.event_type.startsWith('library_') || event.event_type.startsWith('project_')) libraryChanged = true;
                 applied.add(event.event_id);
                 this.plugin.settings.cloudflareAppliedEventIds = [...applied].slice(-500);
                 await this.plugin.saveSettings();
@@ -173,10 +173,13 @@ export class CloudflareCompanionService {
             this.plugin.settings.cloudflareSyncCursor = nextCursor;
             this.plugin.settings.cloudflareAppliedEventIds = [...applied].slice(-500);
             await this.plugin.saveSettings();
+        }
+        // Retry the acknowledgement even when the prior attempt already persisted its cursor.
+        if (nextCursor > 0) {
             const ack = await this.request('/api/sync/ack', 'POST', { through: nextCursor });
             if (!(ack.json as { ok?: boolean }).ok) throw new Error(`Companion acknowledgement failed (${ack.status})`);
         }
-        return libraryChanged;
+        return localChanged;
     }
 
     private async applyEvent(event: CompanionEvent): Promise<void> {
@@ -191,14 +194,14 @@ export class CloudflareCompanionService {
             return;
         }
         if (event.event_type === 'project_change' || event.event_type === 'project_timer') {
-            await new CloudflareProjectService(this.plugin).apply(JSON.parse(event.payload_json) as ProjectEventPayload, event.event_type === 'project_timer');
+            await new CloudflareProjectService(this.plugin).apply(JSON.parse(event.payload_json) as ProjectEventPayload, event.event_type === 'project_timer', event.event_id);
             return;
         }
         if (event.event_type === 'capture') {
             const payload = this.parsePayload(event.payload_json);
             const category = this.captureCategory(getString(payload.category));
             await this.plugin.dailyNotes.appendCapture(category, getString(payload.text), event.habit_date,
-                getString(payload.source), getString(payload.time));
+                getString(payload.source), getString(payload.time), event.event_id);
             return;
         }
         if (event.event_type === 'library_delete') {
@@ -221,12 +224,12 @@ export class CloudflareCompanionService {
         if (event.event_type === 'add_timer') {
             const duration = Math.round(event.amount || 0);
             const payload = this.parsePayload(event.payload_json);
-            await this.plugin.dailyNotes.updateTimer(prop.name, duration, event.habit_date);
+            await this.plugin.dailyNotes.updateTimer(prop.name, duration, event.habit_date, event.event_id);
             await this.plugin.dailyNotes.appendSessionLog(prop.name, duration, event.habit_date, {
                 startTime: getString(payload.startTime),
                 endTime: getString(payload.endTime),
                 mode: getString(payload.mode, 'Telegram'),
-                note: getString(payload.note, '-')
+                note: getString(payload.note, '-'), eventId: event.event_id
             });
         } else if (event.event_type === 'append_session') {
             const payload = this.parsePayload(event.payload_json);
@@ -234,24 +237,24 @@ export class CloudflareCompanionService {
                 startTime: getString(payload.startTime),
                 endTime: getString(payload.endTime),
                 mode: getString(payload.mode, 'Telegram'),
-                note: getString(payload.note, '-')
+                note: getString(payload.note, '-'), eventId: event.event_id
             });
         } else if (event.event_type === 'add_count') {
-            await this.plugin.dailyNotes.updateCount(prop.name, event.amount || 0, event.habit_date);
+            await this.plugin.dailyNotes.updateCount(prop.name, event.amount || 0, event.habit_date, event.event_id);
         } else if (event.event_type === 'set_binary') {
-            await this.plugin.dailyNotes.setBinary(prop.name, Boolean(event.amount), event.habit_date);
+            await this.plugin.dailyNotes.setBinary(prop.name, Boolean(event.amount), event.habit_date, event.event_id);
         } else if (event.event_type === 'set_state') {
             const state = this.explicitState(event.state);
             const payload = this.parsePayload(event.payload_json);
             await this.plugin.dailyNotes.setHabitState(
                 prop.name, state, event.habit_date,
                 state === 'deferred' ? getString(payload.deferredTo) : undefined,
-                state === 'deferred' ? getNumber(payload.deferredAmount) : 0
+                state === 'deferred' ? getNumber(payload.deferredAmount) : 0, event.event_id
             );
         }
     }
 
-    private async pushSnapshot(skipLibrary = false): Promise<void> {
+    private async pushSnapshot(skipCachedState = false): Promise<void> {
         const cutoff = moment().subtract(120, 'days').format('YYYY-MM-DD');
         const values: Array<{ habitName: string; date: string; value: number; state: string | null }> = [];
         for (const file of getDailyNotes(this.plugin.app, this.plugin.settings.dailyNotesFolder)) {
@@ -271,18 +274,18 @@ export class CloudflareCompanionService {
         const now = Date.now();
         const fullRefreshMs = 24 * 60 * 60 * 1000;
         const valuesHash = this.hashSnapshot(values);
-        const shouldPushValues = valuesHash !== (this.plugin.settings.cloudflareValuesSyncHash || '') ||
-            now - (this.plugin.settings.cloudflareValuesLastPushAt || 0) >= fullRefreshMs;
-        const library = await this.buildLibrarySnapshot();
+        const shouldPushValues = !skipCachedState && (valuesHash !== (this.plugin.settings.cloudflareValuesSyncHash || '') ||
+            now - (this.plugin.settings.cloudflareValuesLastPushAt || 0) >= fullRefreshMs);
+        const library = skipCachedState ? [] : await this.buildLibrarySnapshot();
         const libraryHash = this.hashSnapshot(library);
         // MetadataCache may still contain the pre-event value immediately after processFrontMatter.
-        // Defer the library snapshot by one sync cycle instead of overwriting a freshly pulled D1 event.
-        const shouldPushLibrary = !skipLibrary && libraryHash !== (this.plugin.settings.cloudflareLibrarySyncHash || '');
-        const projects = await this.buildProjectSnapshot();
+        // Defer cached snapshots by one sync cycle after applying remote changes.
+        const shouldPushLibrary = !skipCachedState && libraryHash !== (this.plugin.settings.cloudflareLibrarySyncHash || '');
+        const projects = skipCachedState ? [] : await this.buildProjectSnapshot();
         const projectsHash = this.hashSnapshot(projects);
-        const shouldPushProjects = projectsHash !== (this.plugin.settings.cloudflareProjectsSyncHash || '');
-        const boardTasks = !skipLibrary ? await new CloudflareProjectService(this.plugin).snapshot() : undefined;
-        const projectScopes = !skipLibrary ? this.plugin.settings.projectScopes.map(({id,name,statuses,sourceType}) =>
+        const shouldPushProjects = !skipCachedState && projectsHash !== (this.plugin.settings.cloudflareProjectsSyncHash || '');
+        const boardTasks = !skipCachedState ? await new CloudflareProjectService(this.plugin).snapshot() : undefined;
+        const projectScopes = !skipCachedState ? this.plugin.settings.projectScopes.map(({id,name,statuses,sourceType}) =>
             ({id,name,statuses,sourceType})) : undefined;
         const boardHash = boardTasks ? this.hashSnapshot({boardTasks,projectScopes}) : '';
         const shouldPushBoard = !!boardTasks && (boardHash !== (this.plugin.settings.cloudflareBoardSyncHash || '') ||
@@ -342,9 +345,9 @@ export class CloudflareCompanionService {
 
         // A persisted local hash can outlive a cleared/recreated D1 database. Reconcile counts
         // and repair the server snapshot without making every periodic sync rewrite the library.
-        const repairLibrary = !skipLibrary && !shouldPushLibrary && library.length > 0
+        const repairLibrary = !skipCachedState && !shouldPushLibrary && library.length > 0
             && Number.isFinite(result.libraryItemCount) && result.libraryItemCount !== library.length;
-        const repairProjects = !shouldPushProjects && projects.length > 0
+        const repairProjects = !skipCachedState && !shouldPushProjects && projects.length > 0
             && Number.isFinite(result.projectTaskCount) && result.projectTaskCount !== projects.length;
         if (repairLibrary || repairProjects) {
             response = await this.request('/api/sync/push', 'POST', {
@@ -382,7 +385,7 @@ export class CloudflareCompanionService {
         }> = [];
         for (const scope of this.plugin.settings.projectScopes) {
             try {
-                const scopeTasks = await this.plugin.projectEngine.loadTasks(scope);
+                const scopeTasks = await this.plugin.projectEngine.loadTasks(scope, true);
                 scopeTasks.forEach((task, index) => tasks.push({
                     key: `${scope.id}:${task.file.path}:${task.name}:${index}`,
                     scopeId: scope.id,
@@ -398,7 +401,7 @@ export class CloudflareCompanionService {
                     done: isDone(task.status || '')
                 }));
             } catch (error) {
-                console.warn(`Cloudflare project sync skipped scope ${scope.name}:`, error);
+                throw new Error(`Cloudflare project sync failed for scope ${scope.name}: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
         return tasks.sort((a, b) => a.key.localeCompare(b.key));
@@ -449,6 +452,7 @@ export class CloudflareCompanionService {
         }
         await this.plugin.app.fileManager.processFrontMatter(file, frontmatter => {
             const fm = frontmatter as Frontmatter;
+            if (readWriteReceipt(fm, `cloud:${event.event_id}`)) return;
             const timeSpentSeconds = Math.max(0, Math.round(getNumber(payload.timeSpentSeconds)));
             if (timeSpentSeconds > 0) {
                 const timeKey = ['Reading time', 'Time spent'].find(key =>
@@ -478,36 +482,23 @@ export class CloudflareCompanionService {
             if (Object.prototype.hasOwnProperty.call(payload, 'season')) writeProperty(fm, this.plugin.settings, 'season', getNumber(payload.season));
             if (Object.prototype.hasOwnProperty.call(payload, 'episode')) writeProperty(fm, this.plugin.settings, 'episode', getNumber(payload.episode));
             if (Object.prototype.hasOwnProperty.call(payload, 'collectionId')) writeProperty(fm, this.plugin.settings, 'libraryType', getString(payload.collectionId));
+            writeReceipt(fm, `cloud:${event.event_id}`);
         });
         const progressLog = getObject(payload.progressLog);
-        if (Object.keys(progressLog).length) await this.appendMediaProgressLog(file, progressLog);
+        if (Object.keys(progressLog).length) await this.appendMediaProgressLog(file, progressLog, event.event_id);
         const nextCollectionId = getString(payload.collectionId);
         if (nextCollectionId) await this.moveLibraryFile(file, nextCollectionId);
         this.plugin.stateManager.refreshAllMedia();
     }
 
-    private async appendMediaProgressLog(file: TFile, log: Record<string, unknown>): Promise<void> {
+    private async appendMediaProgressLog(file: TFile, log: Record<string, unknown>, eventId: string): Promise<void> {
         const progress = getNumber(log.progress);
         const total = getNumber(log.total);
         const percent = total > 0 ? `${Math.min(100, Math.round(progress / total * 100))}%` : '-';
         const note = getString(log.note, '-').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
-        const row = `| ${getString(log.date)} | ${getString(log.time)} | ${getNumber(log.delta)} | ${progress}/${total || '-'} (${percent}) | ${note} |`;
-        const content = await this.plugin.app.vault.read(file);
-        const lines = content.split(/\r?\n/);
-        const headingIndex = lines.findIndex(line => /^###\s+📖\s+Progress\s*$/.test(line.trim()));
-        if (headingIndex < 0) {
-            await this.plugin.app.vault.modify(file, `${content.trimEnd()}\n\n---\n\n### 📖 Progress\n| Date | Time | Progress | % | Notes |\n|---|---|---|---|---|\n${row}\n`);
-            return;
-        }
-        let insertAt = headingIndex + 1;
-        while (insertAt < lines.length && !lines[insertAt]?.startsWith('|')) insertAt++;
-        while (insertAt < lines.length && lines[insertAt]?.startsWith('|')) insertAt++;
-        if (insertAt === headingIndex + 1 || !lines[headingIndex + 1]?.startsWith('|')) {
-            lines.splice(headingIndex + 1, 0, '| Date | Time | Progress | % | Notes |', '|---|---|---|---|---|', row);
-        } else {
-            lines.splice(insertAt, 0, row);
-        }
-        await this.plugin.app.vault.modify(file, lines.join('\n'));
+        const marker = `<!-- companion-progress:${eventId} -->`;
+        const row = `| ${getString(log.date)} | ${getString(log.time)} | ${getNumber(log.delta)} | ${progress}/${total || '-'} (${percent}) | ${note} ${marker} |`;
+        await this.plugin.app.vault.process(file, content => content.includes(marker) ? content : appendMediaProgressRow(content, row));
     }
 
     private async moveLibraryFile(file: TFile, collectionId: string): Promise<void> {

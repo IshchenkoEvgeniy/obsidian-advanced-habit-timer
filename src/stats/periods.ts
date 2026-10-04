@@ -26,7 +26,8 @@ export interface TrendComparison { current: number; previous: number; deltaPct: 
  */
 export function trendComparison(
     daily: Array<{ date: string; value: number }>,
-    period: PeriodId
+    period: PeriodId,
+    today = todayIso()
 ): TrendComparison {
     const def = PERIODS.find(p => p.id === period);
     if (!def || def.days === null) {
@@ -34,14 +35,12 @@ export function trendComparison(
         return { current: total, previous: 0, deltaPct: null };
     }
     const n = def.days;
-    const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date));
-    const lastDate = sorted.length ? sorted[sorted.length - 1]!.date : todayIso();
-    const curFrom = shiftIso(lastDate, -(n - 1));
+    const curFrom = shiftIso(today, -(n - 1));
     const prevTo = shiftIso(curFrom, -1);
     const prevFrom = shiftIso(prevTo, -(n - 1));
     let current = 0, previous = 0;
     for (const d of daily) {
-        if (d.date >= curFrom && d.date <= lastDate) current += d.value;
+        if (d.date >= curFrom && d.date <= today) current += d.value;
         else if (d.date >= prevFrom && d.date <= prevTo) previous += d.value;
     }
     const deltaPct = previous > 0 ? Math.round((current - previous) / previous * 100) : (current > 0 ? null : 0);
@@ -56,7 +55,8 @@ export function inPeriod(date: string, period: PeriodId, today = todayIso()): bo
 }
 
 function todayIso(): string {
-    return new Date().toISOString().slice(0, 10);
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function shiftIso(iso: string, days: number): string {

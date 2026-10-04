@@ -6,6 +6,45 @@ export const SESSION_ROW_REGEX = /\|\s*(\d{2}):\d{2}\s*-.*?\|\s*.*?\s*\|\s*(.*?)
 
 export interface SessionData { habit: string, subTask?: string, durationSec: number, task?: string, startHour: number }
 
+export function parseSessionRow(line: string): (SessionData & { startTimeMinutes: number }) | null {
+    if (!line.trim().startsWith('|')) return null;
+    const cells: string[] = [];
+    let cell = '';
+    for (let i = 0; i < line.length; i++) {
+        if (line[i] === '\\' && line[i + 1] === '|') { cell += '|'; i++; }
+        else if (line[i] === '|') { cells.push(cell.trim()); cell = ''; }
+        else cell += line[i];
+    }
+    const time = cells[1]?.match(/^(\d{2}):(\d{2})\s*-/);
+    const property = cells[3];
+    const duration = cells[4];
+    if (!time || !property || !duration || !/^\d+:\d{2}:\d{2}$/.test(duration) || cells.length < 6) return null;
+    const separator = property.indexOf(':');
+    const habit = (separator >= 0 ? property.slice(0, separator) : property).trim();
+    const subTask = separator >= 0 ? property.slice(separator + 1).trim() : '';
+    const task = (cells[cells.length - 1] || '').replace(/<!-- (?:timer-session|companion-session|task-session):[^>]* -->/g, '').trim();
+    const startHour = Number(time[1]);
+    return { habit, subTask, task, durationSec: parseDuration(duration), startHour, startTimeMinutes: startHour * 60 + Number(time[2]) };
+}
+
+export function readSessionRows(content: string): Array<SessionData & { startTimeMinutes: number }> {
+    const sessions: Array<SessionData & { startTimeMinutes: number }> = [];
+    let fence: string | null = null;
+    for (const line of content.split('\n')) {
+        const match = line.match(/^\s*(`{3,}|~{3,})/);
+        if (match) {
+            const delimiter = match[1]!;
+            if (!fence) fence = delimiter;
+            else if (delimiter[0] === fence[0] && delimiter.length >= fence.length && line.slice(match[0].length).trim() === '') fence = null;
+            continue;
+        }
+        if (fence) continue;
+        const session = parseSessionRow(line);
+        if (session && session.durationSec > 0) sessions.push(session);
+    }
+    return sessions;
+}
+
 export const HABIT_TYPE = {
     TIMER: 'timer',
     COUNT: 'count',
@@ -103,32 +142,14 @@ export function isDailyNote(file: TFile): boolean {
 
 export function getDailyNotes(app: App, folder: string): TFile[] {
     const allFiles = app.vault.getMarkdownFiles();
+    const folderPath = folder.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
     return allFiles.filter((f: TFile) => {
-        if (folder && !f.path.startsWith(folder)) return false;
+        if (folderPath && !f.path.startsWith(`${folderPath}/`)) return false;
         return isDailyNote(f);
     });
 }
 
 export async function fetchSessionsFromFile(app: App, file: TFile): Promise<SessionData[]> {
     const content = await app.vault.read(file);
-    const lines = content.split('\n');
-    const sessions: SessionData[] = [];
-
-    for (const line of lines) {
-        const m = line.match(SESSION_ROW_REGEX);
-        if (m && m[1] && m[2] && m[3]) {
-            const startHour = parseInt(m[1]);
-            const rawHabit = m[2].trim();
-            const parts = rawHabit.split(':');
-            const habitName = (parts[0] || rawHabit).trim();
-            const subTask = (parts[1] || "").trim();
-            const task = m[4] ? m[4].trim() : "";
-
-            const sec = parseDuration(m[3]);
-            if (sec > 0) {
-                sessions.push({ habit: habitName, subTask, durationSec: sec, task, startHour });
-            }
-        }
-    }
-    return sessions;
+    return readSessionRows(content).map(({habit,subTask,durationSec,task,startHour}) => ({habit,subTask,durationSec,task,startHour}));
 }

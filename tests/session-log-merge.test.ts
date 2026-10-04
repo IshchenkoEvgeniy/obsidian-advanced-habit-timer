@@ -32,4 +32,31 @@ describe('session log merge', () => {
         );
         expect(result).toContain('## Notes\nKeep me');
     });
+
+    it('preserves prose and unrelated tables while merging session logs', () => {
+        const row = '| 09:00 - 09:10 | ⏱️ | Read | 00:10:00 | - | - |';
+        const content = [
+            '### Session Log',
+            '| Time | Mode | Property | Duration | Pages | Task |',
+            '|---|---|---|---|---|---|', row, '',
+            'Keep this reflection.', '',
+            '| Topic | Notes |', '|---|---|', '| Book | Keep this table |', '',
+            '### 📝 Session Log',
+            '| Time | Mode | Property | Duration | Progress | Task |',
+            '|---|---|---|---|---|---|',
+            'Keep this second reflection.'
+        ].join('\n');
+        const result = upsertSessionLog(content);
+        expect(result.match(/### .*Session Log/g)).toHaveLength(1);
+        expect(result).toContain(row);
+        expect(result).toContain('Keep this reflection.');
+        expect(result).toContain('| Topic | Notes |\n|---|---|\n| Book | Keep this table |');
+        expect(result).toContain('Keep this second reflection.');
+        expect(upsertSessionLog(result)).toBe(result);
+    });
+
+    it('does not normalize a session log example inside a fenced code block', () => {
+        const content = '```markdown\n### Session Log\nExample text\n```\n';
+        expect(upsertSessionLog(content)).toBe(content);
+    });
 });

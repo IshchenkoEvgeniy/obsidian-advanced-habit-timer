@@ -8,14 +8,31 @@ function fixture(sourceType: 'file' | 'folder') {
     const file = new TFile('Projects/Module/Task.md');
     file.stat.mtime = 7;
     const read = vi.fn().mockResolvedValue('- [ ] Open task\n- [x] Complete task');
+    const frontmatter:Record<string,unknown>={};
     const app = { vault: { read, cachedRead: read, getMarkdownFiles: () => [file], getAbstractFileByPath: () => file },
-        metadataCache: { getFileCache: () => ({ frontmatter: {} }) } } as unknown as App;
+        metadataCache: { getFileCache: () => ({ frontmatter }) } } as unknown as App;
     const scope: ProjectScopeDefinition = { id: 'same', name: 'Test', sourceType,
         sourceValue: sourceType === 'file' ? file.path : 'Projects', statuses: 'Backlog, Done', color: '#111111' };
-    return { parser: new ProjectParser(app, new ProjectCache()), scope, read, file };
+    return { parser: new ProjectParser(app, new ProjectCache()), scope, read, file, frontmatter, app };
 }
 
 describe('project cache after scope settings change', () => {
+    it('reports Dataview failures to strict snapshot readers',async()=>{
+        const {parser,scope,app}=fixture('folder');scope.sourceType='dataview';
+        Object.assign(app,{plugins:{plugins:{dataview:{api:{pages:()=>{throw new Error('query failed');}}}}}});
+        await expect(parser.loadTasks(scope,true)).rejects.toThrow('query failed');
+        Object.assign(app,{plugins:undefined});
+        await expect(parser.loadTasks(scope,true)).rejects.toThrow('Dataview');
+    });
+    it('loads a folder scope rooted at the vault without truncating its section path',async()=>{
+        const {parser,scope}=fixture('folder');scope.sourceValue='';
+        expect((await parser.loadTasks(scope))[0]).toMatchObject({section:'Projects/Module'});
+    });
+    it('matches complete frontmatter tags rather than substrings',async()=>{
+        const {parser,scope,frontmatter}=fixture('folder');scope.sourceType='tag';scope.sourceValue='work';
+        frontmatter.tags='homework';expect(await parser.loadTasks(scope)).toEqual([]);
+        frontmatter.tags='#work, other';expect(await parser.loadTasks(scope)).toHaveLength(1);
+    });
     it('reuses unchanged checklist data, then refreshes statuses and color without a file edit', async () => {
         const { parser, scope, read, file } = fixture('file');
         expect((await parser.loadTasks(scope)).map(task => task.status)).toEqual(['Backlog', 'Done']);

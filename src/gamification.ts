@@ -1,5 +1,5 @@
 import { App, moment } from 'obsidian';
-import { parseDuration, getDailyNotes, SESSION_ROW_REGEX, getObject } from './utils';
+import { getDailyNotes, readSessionRows, getObject } from './utils';
 import { t } from './i18n';
 import type { Language } from './i18n';
 import type { HabitTimerSettings, HabitProperty, MediaCollectionConfig } from './types';
@@ -68,39 +68,32 @@ export class GamificationEngine {
 
         for (const file of files) {
             const content = await this.app.vault.cachedRead(file);
-            const lines = content.split('\n');
             const date = file.basename;
 
             // Process table rows for timer habits
-            for (const line of lines) {
-                const m = line.match(SESSION_ROW_REGEX);
-                if (m && m[1] && m[2] && m[3]) {
-                    totalFirst = 1;
+            for (const session of readSessionRows(content)) {
+                totalFirst = 1;
 
-                    const startHour = parseInt(m[1]);
-                    const rawHabit = m[2].trim();
-                    const parts = rawHabit.split(':');
-                    const habitName = (parts[0] || rawHabit).trim();
-                    const durationStr = m[3];
-                    
-                    dailySessionsCount[date] = (dailySessionsCount[date] || 0) + 1;
-                    
-                    if (!dailyHabits[date]) dailyHabits[date] = new Set();
-                    dailyHabits[date].add(habitName);
+                const startHour = session.startHour;
+                const habitName = session.habit;
 
-                    if (startHour >= 4 && startHour < 7) totalEarly++;
-                    if (startHour >= 23 || startHour < 3) totalOwl++;
+                dailySessionsCount[date] = (dailySessionsCount[date] || 0) + 1;
 
-                    const sec = parseDuration(durationStr);
-                    if (sec >= 14400) totalDeep++;
+                if (!dailyHabits[date]) dailyHabits[date] = new Set();
+                dailyHabits[date].add(habitName);
 
-                    datesWithSessions.add(date);
-                    
-                    const weekStr = moment(date, "YYYY-MM-DD").format('YYYY-ww');
-                    if (!habitWeeklyTime[habitName]) habitWeeklyTime[habitName] = {};
-                    habitWeeklyTime[habitName][weekStr] = (habitWeeklyTime[habitName][weekStr] || 0) + sec;
-                    weeklyTotalTime[weekStr] = (weeklyTotalTime[weekStr] || 0) + sec;
-                }
+                if (startHour >= 4 && startHour < 7) totalEarly++;
+                if (startHour >= 23 || startHour < 3) totalOwl++;
+
+                const sec = session.durationSec;
+                if (sec >= 14400) totalDeep++;
+
+                datesWithSessions.add(date);
+
+                const weekStr = moment(date, "YYYY-MM-DD").format('YYYY-ww');
+                if (!habitWeeklyTime[habitName]) habitWeeklyTime[habitName] = {};
+                habitWeeklyTime[habitName][weekStr] = (habitWeeklyTime[habitName][weekStr] || 0) + sec;
+                weeklyTotalTime[weekStr] = (weeklyTotalTime[weekStr] || 0) + sec;
             }
 
             // Process frontmatter for count, binary, and negative habits

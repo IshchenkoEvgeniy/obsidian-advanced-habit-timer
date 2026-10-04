@@ -2,6 +2,20 @@ const PROGRESS_HEADING = /^###\s+(?:📖\s*)?Progress\s*$/i;
 const ANY_HEADING = /^#{1,6}\s+/;
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Insert a progress entry before the next heading, so daily goal readers can find it. */
+export function appendMediaProgressRow(content: string, row: string): string {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const heading = lines.findIndex(line => PROGRESS_HEADING.test(line.trim()));
+    if (heading < 0) {
+        return `${content.trimEnd()}\n\n---\n\n### 📖 Progress\n| Date | Time | Progress | % | Notes |\n|---|---|---|---|---|\n${row}\n`;
+    }
+    let insertAt = heading + 1;
+    while (insertAt < lines.length && !ANY_HEADING.test(lines[insertAt]?.trim() || '')) insertAt++;
+    while (insertAt > heading + 1 && !lines[insertAt - 1]?.trim()) insertAt--;
+    lines.splice(insertAt, 0, row);
+    return `${lines.join('\n').trimEnd()}\n`;
+}
+
 export function mediaProgressForDate(content: string, date: string): number {
     if (!DATE_KEY.test(date)) return 0;
     const lines = content.replace(/\r\n/g, '\n').split('\n');

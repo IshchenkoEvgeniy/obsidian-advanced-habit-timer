@@ -2,8 +2,9 @@ import type {
   CompanionConfigRow, CompanionEventRow, D1Database, HabitConfig, HabitState,
   HabitValueRow, LibraryItemRow, LibrarySyncItem, MediaDraftRow, ProjectTaskRow, SyncPushBody, TimerRow
 } from './types';
-import { syncBoard, recordProjectTime } from './project-board';
-import { recordSession } from './session-history';
+import { syncBoard, prepareProjectTime } from './project-board';
+import { prepareSession } from './session-history';
+import { timerWriteGuard } from './timer-guard';
 import type { DailyTask } from '../../src/tasks/model';
 import type { BoardTask } from './project-board';
 
@@ -456,15 +457,13 @@ export async function addHabitValue(
   db: D1Database, profileId: string, habitName: string, date: string,
   amount: number, eventType: 'add_timer' | 'add_count', payload: Record<string, unknown> = {}
 ): Promise<void> {
-  const current = await getValue(db, profileId, habitName, date);
-  const next = Math.max(0, (current?.value || 0) + amount);
   const now = Date.now();
   await db.batch([
     db.prepare(`INSERT INTO habit_values (profile_id, habit_name, habit_date, value, state, updated_at)
       VALUES (?, ?, ?, ?, NULL, ?)
       ON CONFLICT(profile_id, habit_name, habit_date) DO UPDATE SET
-        value=excluded.value, state=NULL, updated_at=excluded.updated_at`)
-      .bind(profileId, habitName, date, next, now),
+        value=MAX(0, habit_values.value + ?), state=NULL, updated_at=excluded.updated_at`)
+      .bind(profileId, habitName, date, Math.max(0, amount), now, amount),
     eventStatement(db, profileId, eventType, habitName, date, amount, null, now, payload)
   ]);
 }
@@ -501,12 +500,13 @@ export async function setHabitState(
 
 function eventStatement(
   db: D1Database, profileId: string, type: string, habitName: string, date: string,
-  amount: number | null, state: string | null, now: number, payload: Record<string, unknown> = {}
+  amount: number | null, state: string | null, now: number, payload: Record<string, unknown> = {},
+  guard = {sql: '1', values: [] as unknown[]}
 ) {
   return db.prepare(`INSERT INTO companion_events
     (event_id, profile_id, event_type, habit_name, habit_date, amount, state, payload_json, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), profileId, type, habitName, date, amount, state, JSON.stringify(payload), now);
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard.sql}`)
+    .bind(crypto.randomUUID(), profileId, type, habitName, date, amount, state, JSON.stringify(payload), now, ...guard.values);
 }
 
 export async function getTimer(db: D1Database, profileId: string): Promise<TimerRow | null> {
@@ -524,13 +524,12 @@ export async function startTimer(
   db: D1Database, profileId: string, habitName: string, targetSeconds: number | null,
   startTime: string, mediaId: number | null = null, taskJson: string | null = null
 ): Promise<boolean> {
-  if (await getTimer(db, profileId)) return false;
   const now = Date.now();
-  await db.prepare(`INSERT INTO active_timers
+  const result = await db.prepare(`INSERT OR IGNORE INTO active_timers
     (profile_id, habit_name, started_at, elapsed_seconds, target_seconds, timer_state, start_time, updated_at, media_id, task_json, session_id, original_started_at)
     VALUES (?, ?, ?, 0, ?, 'running', ?, ?, ?, ?, ?, ?)`)
     .bind(profileId, habitName, now, targetSeconds, startTime, now, mediaId, taskJson,crypto.randomUUID(),now).run();
-  return true;
+  return Number(result.meta?.changes) > 0;
 }
 
 export async function pauseTimer(db: D1Database, profileId: string): Promise<TimerRow | null> {
@@ -545,6 +544,7 @@ export async function pauseTimer(db: D1Database, profileId: string): Promise<Tim
 export async function resumeTimer(db: D1Database, profileId: string): Promise<TimerRow | null> {
   const timer = await getTimer(db, profileId);
   if (!timer) return null;
+  if (timer.timer_state === 'running') return timer;
   const now = Date.now();
   await db.prepare(`UPDATE active_timers SET timer_state='running', started_at=?, updated_at=? WHERE profile_id=?`)
     .bind(now, now, profileId).run();
@@ -557,34 +557,46 @@ type StoredTimerTask = (DailyTask & { key: string; kind: 'daily' }) | (BoardTask
 export async function finishTimer(
   db: D1Database, profileId: string, date: string, endTime: string, capToTarget = false, note = ''
 ): Promise<{ timer: TimerRow; elapsed: number; sessionId: string } | null> {
-  const timer = await db.prepare('DELETE FROM active_timers WHERE profile_id = ? RETURNING *')
-    .bind(profileId).first<TimerRow>();
+  const timer = await getTimer(db, profileId);
   if (!timer) return null;
   const measured = timerElapsed(timer);
   const elapsed = capToTarget && timer.target_seconds ? Math.min(measured, timer.target_seconds) : measured;
-  const sessionId=await recordSession(db,profileId,timer,elapsed,'completed',note);
+  const session=await prepareSession(db,profileId,timer,elapsed,'completed',note,date,endTime);
+  const sessionId=session.id;
   const linkedTask = timer.task_json ? JSON.parse(timer.task_json) as StoredTimerTask : null;
+  const guard=timerWriteGuard(profileId,timer);
+  const now=Date.now();
+  const statements=[session.statement];
+  const increment=(habit:string)=>db.prepare(`INSERT INTO habit_values(profile_id,habit_name,habit_date,value,state,updated_at)
+    SELECT ?,?,?,?,NULL,? WHERE ${guard.sql}
+    ON CONFLICT(profile_id,habit_name,habit_date) DO UPDATE SET value=habit_values.value+excluded.value,state=NULL,updated_at=excluded.updated_at`)
+    .bind(profileId,habit,date,elapsed,now,...guard.values);
   if (linkedTask?.kind === 'daily') {
-    if(linkedTask.habitName)await db.prepare(`INSERT INTO habit_values(profile_id,habit_name,habit_date,value,state,updated_at) VALUES(?,?,?,?,NULL,?) ON CONFLICT(profile_id,habit_name,habit_date) DO UPDATE SET value=habit_values.value+excluded.value,state=NULL,updated_at=excluded.updated_at`)
-      .bind(profileId,linkedTask.habitName,date,elapsed,Date.now()).run();
-    await db.prepare(`INSERT OR IGNORE INTO companion_events(event_id,profile_id,event_type,habit_name,habit_date,payload_json,created_at) VALUES(?,?,'daily_task_session',?,?,?,?)`)
-      .bind(`daily-session:${sessionId}`,profileId,linkedTask.id,date,JSON.stringify({task:linkedTask,seconds:elapsed,startTime:timer.start_time,endTime,note,sessionId}),Date.now()).run();
-  } else if (linkedTask) await recordProjectTime(db, profileId, linkedTask, elapsed, date);
+    if(linkedTask.habitName)statements.push(increment(linkedTask.habitName));
+    statements.push(db.prepare(`INSERT OR IGNORE INTO companion_events(event_id,profile_id,event_type,habit_name,habit_date,payload_json,created_at) SELECT ?,?,'daily_task_session',?,?,?,? WHERE ${guard.sql}`)
+      .bind(`daily-session:${sessionId}`,profileId,linkedTask.id,date,JSON.stringify({task:linkedTask,seconds:elapsed,startTime:timer.start_time,endTime,note,sessionId}),now,...guard.values));
+  } else if (linkedTask) statements.push(...await prepareProjectTime(db,profileId,linkedTask,elapsed,date,guard));
   if (linkedTask?.kind !== 'daily') {
-  await addHabitValue(db, profileId, timer.habit_name, date, elapsed, 'add_timer', {
+  statements.push(increment(timer.habit_name),eventStatement(db, profileId, 'add_timer',timer.habit_name, date, elapsed,null,now, {
     startTime: timer.start_time,
     endTime,
     mode: 'Telegram',
-    note: note || (timer.task_json ? (JSON.parse(timer.task_json) as StoredTimerTask).name : '-'),sessionId
-  });
+    note: note || linkedTask?.name || '-',sessionId
+  },guard));
   }
+  statements.push(db.prepare(`DELETE FROM active_timers WHERE profile_id=? AND ${guard.sql}`).bind(profileId,...guard.values));
+  const results=await db.batch(statements);
+  if (!Number(results[results.length-1]?.meta?.changes)) return null;
   return { timer: {...timer,session_id:sessionId}, elapsed, sessionId };
 }
 
 export async function cancelTimer(db: D1Database, profileId: string): Promise<boolean> {
-  const timer=await db.prepare('DELETE FROM active_timers WHERE profile_id = ? RETURNING *').bind(profileId).first<TimerRow>();
-  if(timer)await recordSession(db,profileId,timer,timerElapsed(timer),'cancelled');
-  return Boolean(timer);
+  const timer=await getTimer(db,profileId);
+  if(!timer)return false;
+  const session=await prepareSession(db,profileId,timer,timerElapsed(timer),'cancelled');
+  const guard=timerWriteGuard(profileId,timer);
+  const results=await db.batch([session.statement,db.prepare(`DELETE FROM active_timers WHERE profile_id=? AND ${guard.sql}`).bind(profileId,...guard.values)]);
+  return Number(results[1]?.meta?.changes)>0;
 }
 
 export async function getEvents(db: D1Database, profileId: string, after: number): Promise<CompanionEventRow[]> {

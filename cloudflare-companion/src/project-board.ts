@@ -96,12 +96,15 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
  return json({ok:true});
 }
 
-export async function recordProjectTime(db:D1Database,profile:string,task:BoardTask,seconds:number,date:string):Promise<void>{
+export async function prepareProjectTime(db:D1Database,profile:string,task:BoardTask,seconds:number,date:string,guard:{sql:string;values:unknown[]}={sql:'1',values:[]}){
  const row=await db.prepare('SELECT data_json FROM project_documents WHERE profile_id=? AND task_key=? AND deleted=0').bind(profile,task.key).first<{data_json:string}>();
  const current:BoardTask=row?JSON.parse(row.data_json) as BoardTask:task;
- const next={...current,timeSpentSec:current.timeSpentSec+seconds};
- await db.batch([
- db.prepare('UPDATE project_documents SET data_json=?,revision=revision+1,pending=1 WHERE profile_id=? AND task_key=?').bind(JSON.stringify(next),profile,task.key),
- db.prepare(`INSERT INTO companion_events(event_id,profile_id,event_type,habit_name,habit_date,payload_json,created_at) VALUES(?,?,'project_timer',?,?,?,?)`)
- .bind(crypto.randomUUID(),profile,task.key,date,JSON.stringify({task:current,seconds}),Date.now())]);
+ return [
+ db.prepare(`UPDATE project_documents SET data_json=json_set(data_json,'$.timeSpentSec',COALESCE(json_extract(data_json,'$.timeSpentSec'),0)+?),revision=revision+1,pending=1 WHERE profile_id=? AND task_key=? AND ${guard.sql}`).bind(seconds,profile,task.key,...guard.values),
+ db.prepare(`INSERT INTO companion_events(event_id,profile_id,event_type,habit_name,habit_date,payload_json,created_at) SELECT ?,?,'project_timer',?,?,?,? WHERE ${guard.sql}`)
+ .bind(crypto.randomUUID(),profile,task.key,date,JSON.stringify({task:current,seconds}),Date.now(),...guard.values)];
+}
+
+export async function recordProjectTime(db:D1Database,profile:string,task:BoardTask,seconds:number,date:string):Promise<void>{
+ await db.batch(await prepareProjectTime(db,profile,task,seconds,date));
 }
