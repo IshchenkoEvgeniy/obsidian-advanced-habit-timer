@@ -6,6 +6,8 @@ export function projectTaskToData(
     changes: Partial<TaskData> = {}
 ): TaskData {
     return {
+        expectedLine: task.sourceText,
+        expectedFrontmatter: task.sourceFrontmatter,
         name: task.name,
         status: task.status,
         habitName: task.habitName || '',

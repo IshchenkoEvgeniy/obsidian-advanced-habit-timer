@@ -18,7 +18,7 @@ export function aggregateChecklistStatus(tasks: ProjectTask[], columns: string[]
 export function projectStatusColor(scope: ProjectScopeDefinition, status: string, columns: string[]): string {
     const field = scope.githubFields?.find(field => field.name === 'Status' && field.type === 'SINGLE_SELECT');
     const optionId = remoteOptionForLocal(status, field?.options || []);
-    const color = field?.options?.find(option => option.id === optionId)?.color;
+    const color = scope.statusDetails?.[status]?.color || field?.options?.find(option => option.id === optionId)?.color;
     const colors: Record<string, string> = {
         GRAY: '#9198a1', BLUE: '#4493f8', GREEN: '#3fb950', YELLOW: '#d29922',
         ORANGE: '#db6d28', RED: '#f85149', PINK: '#db61a2', PURPLE: '#a371f7'

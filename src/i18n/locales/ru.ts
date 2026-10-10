@@ -1,4 +1,6 @@
+import { designRu } from '../../design/locales';
 export const ru = {
+    ...designRu,
     // General
     total: "Всего",
     save: "Сохранить",
@@ -262,7 +264,7 @@ export const ru = {
     estimated_time_label: "Оценка времени (напр. 02:00:00)",
     start_date_label: "Дата начала (ГГГГ-ММ-ДД)",
     end_date_label: "Дата окончания (ГГГГ-ММ-ДД)",
-    task_cover_label: "Ссылка на обложку",
+    task_cover_label: "URL или путь к изображению обложки",
     task_color_label: "Цвет (CSS hex или имя)",
     please_configure_projects: "Пожалуйста, укажите папку проектов в настройках.",
     select_habit_link: "Выберите привычку для привязки к этой задаче...",

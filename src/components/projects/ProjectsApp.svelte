@@ -5,15 +5,13 @@
     import type { ProjectsView } from '../../projects-view';
     import type { ViewContext } from '../../projects/views/base-view';
     import { t } from '../../i18n';
-    import {
-        activeScopeId, columns, compactMode, currentTab, filteredTasks,
-        filterHabit, filterTag, scopesWithStats, searchQuery, selectedTasks, tasks
-    } from '../../store/ProjectsStore';
+
     import Board from './Board.svelte';
     import ProjectCalendar from './ProjectCalendar.svelte';
     import ProjectDashboard from './ProjectDashboard.svelte';
     import ProjectTable from './ProjectTable.svelte';
     import ProjectTimeline from './ProjectTimeline.svelte';
+    import WorldWorkspace from '../../design/components/WorldWorkspace.svelte';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
@@ -32,30 +30,36 @@
         { id: 'timeline', icon: 'calendar-range', label: 'timeline_view' }
     ] as const;
 
+    const { snapshot, loading, currentTab, filteredTasks, filterHabit, filterTag, searchQuery, selectedTasks, compactMode } = view.store;
     let bulkStatus = '';
     let syncing = false;
+    let dataSource = 'plan';
+    $: worldAvailable = plugin.design?.project()?.id === $snapshot.activeScopeId;
+    $: if (!worldAvailable) dataSource = 'plan';
 
     async function syncGitHub(): Promise<void> {
-        if (syncing) return;
+        if (syncing || dataSource !== 'plan') return;
         syncing = true;
         try { await view.syncGitHub(); }
         finally { syncing = false; }
     }
 
     $: lang = plugin.settings.language;
-    $: activeScope = plugin.settings.projectScopes?.find(scope => scope.id === $activeScopeId);
-    $: activeStats = $scopesWithStats.find(scope => scope.id === $activeScopeId);
-    $: allTags = [...new Set($tasks.flatMap(task =>
+    $: activeScope = plugin.settings.projectScopes?.find(scope => scope.id === $snapshot.activeScopeId);
+    $: activeStats = $snapshot.scopesWithStats.find(scope => scope.id === $snapshot.activeScopeId);
+    $: allTags = [...new Set($snapshot.tasks.flatMap(task =>
         task.tags?.split(',').map(tag => tag.trim()).filter(Boolean) || []
     ))].sort((a, b) => a.localeCompare(b));
-    $: habits = [...new Set($tasks.map(task => task.habitName).filter((value): value is string => Boolean(value)))].sort();
+    $: habits = [...new Set($snapshot.tasks.map(task => task.habitName).filter((value): value is string => Boolean(value)))].sort();
     $: ctx = {
-        allTasks: $tasks,
-        archivedTasks: view.archivedTasks,
+        projectTab: currentTab,
+        allTasks: $snapshot.tasks,
+        stages: $snapshot.stages,
+        archivedTasks: $snapshot.archivedTasks,
         filteredTasks: $filteredTasks,
         selectedTasks: $selectedTasks,
         compactMode: $compactMode,
-        columns: $columns,
+        columns: $snapshot.columns,
         onRefresh: () => void view.loadTasks(),
         onSelectionChange: (selection?: Set<string>) => {
             const next = new Set(selection ?? $selectedTasks);
@@ -78,12 +82,17 @@
     }
 </script>
 
-<div class="projects-app" class:table-mode={$currentTab === 'table'}>
-    {#if $scopesWithStats.length}
+<div class="projects-app" class:table-mode={$currentTab === 'table'} class:board-mode={$currentTab === 'board'} aria-busy={$loading}>
+    {#if worldAvailable}<nav class="project-dataset-nav" aria-label={lang === 'ru' ? 'Данные проекта' : 'Project data'}><button class:mod-cta={dataSource === 'plan'} on:click={() => dataSource = 'plan'}>{lang === 'ru' ? 'План разработки' : 'Development plan'} · GitHub</button><button class:mod-cta={dataSource === 'world'} on:click={() => dataSource = 'world'}>{lang === 'ru' ? 'Таблицы мира' : 'World tables'}</button></nav>{/if}
+    {#if $loading}<div class="project-loading" role="status">{lang === 'ru' ? 'Загрузка проекта…' : 'Loading project…'}</div>{/if}
+    <div class="project-content" inert={$loading}>
+    {#if dataSource === 'world' && worldAvailable}<div class="project-world-content"><WorldWorkspace service={plugin.design} /></div>
+    {:else}
+    {#if $snapshot.scopesWithStats.length}
         <header class="project-heading">
             <span class="project-heading-icon" use:icon={'folder-open'}></span>
-            <select value={$activeScopeId} aria-label={t(lang, 'projects_scopes_aria')} on:change={(event) => void view.setActiveScope(event.currentTarget.value)}>
-                {#each $scopesWithStats as scope (scope.id)}<option value={scope.id}>{scope.name}</option>{/each}
+            <select value={$snapshot.activeScopeId} aria-label={t(lang, 'projects_scopes_aria')} on:change={(event) => void view.setActiveScope(event.currentTarget.value)}>
+                {#each $snapshot.scopesWithStats as scope (scope.id)}<option value={scope.id}>{scope.name}</option>{/each}
             </select>
             {#if activeStats}<span class="project-progress" style={`--scope-color:${activeStats.color || 'var(--interactive-accent)'}`}>
                 <span class="progress-dot"></span>{activeStats.done}/{activeStats.total} · {activeStats.pct}%
@@ -136,7 +145,7 @@
             <strong>{t(lang, 'projects_selected_count', [$selectedTasks.size])}</strong>
             <select bind:value={bulkStatus} on:change={() => void changeBulkStatus()} aria-label={t(lang, 'projects_change_status')}>
                 <option value="">{t(lang, 'projects_change_status')}</option>
-                {#each $columns as status}<option value={status}>{status}</option>{/each}
+                {#each $snapshot.columns as status}<option value={status}>{status}</option>{/each}
             </select>
             <button on:click={() => void view.duplicateSelected()}><span class="bulk-icon" use:icon={'copy'}></span>{t(lang, 'projects_bulk_duplicate')}</button>
             <button on:click={() => void view.exportSelected()}><span class="bulk-icon" use:icon={'download'}></span>{t(lang, 'projects_bulk_export')}</button>
@@ -149,6 +158,7 @@
     {/if}
 
     <main>
+        {#key activeScope?.id || ''}
         {#if !activeScope}
             <div class="app-empty">
                 <span class="empty-icon" use:icon={'folder-open'}></span>
@@ -167,11 +177,20 @@
         {:else if $currentTab === 'timeline'}
             <ProjectTimeline {plugin} dataEngine={view.dataEngine} scope={activeScope} {ctx} />
         {/if}
+        {/key}
     </main>
+    {/if}
+</div>
 </div>
 
 <style>
-    .projects-app { display:flex; flex-direction:column; gap:10px; height:100%; min-height:0; padding:12px; overflow:hidden; }
+    .project-dataset-nav { display:flex; gap:6px; flex-shrink:0; padding:6px 12px; border-bottom:1px solid var(--background-modifier-border); }
+    .project-dataset-nav button { min-height:34px; height:auto; font-size:13px; padding:5px 9px; }
+    .project-world-content { flex:1; min-width:0; min-height:0; overflow:hidden; }
+    .project-content { display:contents; }
+    .project-loading { position:absolute; inset:0; z-index:100; display:grid; place-content:center; background:var(--background-primary); color:var(--text-muted); }
+    .projects-app { position:relative; }
+    .projects-app { box-sizing:border-box; display:flex; flex-direction:column; gap:10px; width:100%; min-width:0; height:100%; min-height:0; padding:12px; overflow:hidden; }
     .projects-app.table-mode { gap:0; padding:0; }
     .projects-app.table-mode .project-heading { min-height:48px; padding:6px 16px; border-bottom:1px solid var(--background-modifier-border); }
 
@@ -217,7 +236,8 @@
     .github-sync span :global(svg) { width:14px; height:14px; }
     .bulk .clear { width:30px; height:30px; justify-content:center; padding:6px; }
 
-    main { position:relative; flex:1; min-height:0; overflow:auto; }
+    main { position:relative; flex:1; min-width:0; width:100%; max-width:100%; min-height:0; overflow:auto; }
+    .projects-app.board-mode main { overflow:hidden; }
     .app-empty { display:flex; flex-direction:column; align-items:center; gap:6px; margin:8vh auto 0; max-width:420px; padding:40px 24px; border:1px dashed var(--background-modifier-border); border-radius:var(--radius-xl); background:var(--background-primary); text-align:center; }
     .empty-icon { margin-bottom:6px; color:var(--text-faint); }
     .empty-icon :global(svg) { width:36px; height:36px; }

@@ -9,14 +9,18 @@
  * Do NOT try to replicate full Obsidian behaviour here.
  */
 
+import { parse, stringify } from 'yaml';
+
 // TFile-like object — only the fields our utils access
 export class TFile {
     basename: string;
     path: string;
+    extension: string;
     stat: { mtime: number; ctime: number; size: number };
 
     constructor(path?: string) {
         this.path = path ?? '';
+        this.extension = this.path.split('.').pop() ?? '';
         this.basename = path?.split('/').pop()?.replace(/\.md$/, '') ?? '';
         this.stat = { mtime: 0, ctime: 0, size: 0 };
     }
@@ -38,10 +42,17 @@ export class Modal { constructor(_app: App) {} }
 export class Notice { constructor(_msg: string) {} }
 export class Setting { constructor(_el: HTMLElement) {} }
 export class SuggestModal { constructor(_app: App) {} }
+export class FuzzySuggestModal extends SuggestModal {}
+export class Menu {}
+export function normalizePath(path: string): string { return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\.\//, '').replace(/^\/|\/$/g, ''); }
+export function parseYaml(source: string): unknown { return parse(source) as unknown; }
+export function stringifyYaml(value: unknown): string { return stringify(value); }
 export class ItemView {}
 export class MarkdownView extends ItemView {}
 export function setIcon(_element: HTMLElement, _icon: string): void {}
 export class MarkdownRenderer {}
+export class Component { load() {} unload() {} }
 export class ButtonComponent {}
 export class Platform {}
 export const WorkspaceLeaf = {};
+export async function requestUrl(): Promise<never> { throw new Error('HTTP requests are not available in unit tests'); }

@@ -1,27 +1,32 @@
 <script lang="ts">
-    import { MarkdownView, Notice, setIcon, type App } from 'obsidian';
+    import { ButtonComponent, MarkdownView, Modal, Notice, setIcon, type App } from 'obsidian';
     import type { Action } from 'svelte/action';
     import type HabitTimerPlugin from '../../main';
     import { TaskEditorModal } from '../../projects/modals/task-editor';
+    import { attachProjectImageFromVault, attachProjectImagesFromDevice, showProjectImageMenu } from '../../projects/project-image-actions';
     import { projectTaskToData } from '../../projects/task-data';
+    import { checklistNoteLink } from '../../projects/checklist-notes';
     import { taskDisplayTitle } from '../../projects/engine/task-identity';
-    import { addChecklistGroupChild, addChecklistStageChild, addChecklistSubtask } from '../../projects/structured-editor';
-    import type { ProjectDataEngine } from '../../projects/project-data';
-    import type { ProjectScopeDefinition, ProjectTask, TaskData } from '../../projects/types';
+    import type { ProjectDataEngine, TaskPlacement } from '../../projects/project-data';
+    import type { ProjectScopeDefinition, ProjectTask, TaskData, ProjectStage } from '../../projects/types';
     import type { ViewContext } from '../../projects/views/base-view';
-    import { currentTab } from '../../store/ProjectsStore';
+    import { writable } from 'svelte/store';
     import SubIssuesProgress from './SubIssuesProgress.svelte';
+    import ProjectTaskComposer from './ProjectTaskComposer.svelte';
     import { buildTableHierarchy } from './table-hierarchy';
     import { collectTableStages, groupTableStages, tableStageKey, type TableRowGroup, type StageGrouping } from './table-stage-groups';
     import { fieldKeys, hasCurrentTableViewConfig, normalizeTableViewConfig, type Field, type GroupField, type SortRule, type ViewConfig, type SavedView } from './table-view-config';
     import { clampColumnWidth, defaultColumnWidth, minimumColumnWidth, normalizeColumnWidths, type ColumnWidths } from './table-column-widths';
     import { aggregateChecklistStatus, projectStatusColor } from '../../projects/checklist-status';
+    import { GITHUB_IMPORT_SECTION } from '../../projects/native-checklist';
 
     export let plugin: HabitTimerPlugin;
     export let app: App;
     export let dataEngine: ProjectDataEngine;
     export let scope: ProjectScopeDefinition;
     export let ctx: ViewContext;
+    const fallbackTab = writable<'table' | 'board' | 'calendar' | 'timeline' | 'dashboard'>('table');
+    $: currentTab = ctx.projectTab || fallbackTab;
 
     type RowGroup = TableRowGroup;
     const editableFields: Field[] = ['status', 'priority', 'tags', 'habit', 'start', 'due', 'estimate'];
@@ -32,6 +37,22 @@
         return { update(next) { setIcon(node, next); } };
     };
     const focus: Action<HTMLInputElement> = node => { queueMicrotask(() => node.focus()); };
+
+    function creationParentLabel(): string {
+        if (quickPlacement.kind === 'task') return quickPlacement.parent.name;
+        if (quickPlacement.kind === 'group') return quickPlacement.parent.title;
+        return '';
+    }
+
+    function toggleStatusMenu(task: ProjectTask, event: MouseEvent): void {
+        if (openStatusForId === task.id) { openStatusForId = ''; return; }
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        const menuHeight = Math.min(240, ctx.columns.length * 30 + 8);
+        statusMenuTop = rect.bottom + menuHeight > window.innerHeight
+            ? Math.max(8, rect.top - menuHeight - 3) : rect.bottom + 3;
+        statusMenuLeft = Math.max(8, Math.min(rect.left, window.innerWidth - 170));
+        openStatusForId = task.id;
+    }
 
     let query = '';
     let visible = new Set<Field>(['status', 'priority', 'section', 'tags', 'due', 'estimate']);
@@ -51,15 +72,25 @@
     let hiddenTaskIds = new Set<string>();
     let initializedChecklistScope = '';
     let restoredCollapseForScope = false;
-    let addingChild: { kind: 'stage'; stage: string; task: ProjectTask }
-        | { kind: 'group'; parent: { id: string; title: string; sourceLine: number }; task: ProjectTask }
-        | { kind: 'task'; task: ProjectTask } | null = null;
-    let childName = '';
+    let quickPlacement: TaskPlacement = { kind: 'root' };
     let actionMenu = '';
     let editingName = '';
     let nameDraft = '';
-    let addingGroup: string | null = null;
+    let quickAddOpen = false;
+    let quickAnchor = 'top';
     let newName = '';
+    let newStatus = '';
+    let newSection = '';
+    let newDescription = '';
+    let newPriority = '';
+    let newStart = '';
+    let newDue = '';
+    let newEstimate = '';
+    let newTags = '';
+    let newHabit = '';
+    let openStatusForId = '';
+    let statusMenuTop = 0;
+    let statusMenuLeft = 0;
     let draggedField: Field | null = null;
     let draggedTask: ProjectTask | null = null;
     let selectedCells = new Set<string>();
@@ -189,9 +220,11 @@
     // Preference loading assigns state inside a function. Run it before projections:
     // legacy Svelte cannot infer those assignments when ordering reactive statements.
     $: if (scope.id !== loadedScopeId) loadPreferences(scope.id);
-    $: hasSections = ctx.allTasks.some(task => Boolean(task.section));
-    $: hasChecklistHierarchy = ctx.allTasks.some(task => Boolean(task.checklistAncestors?.length) &&
+    $: hasSections = Boolean(ctx.stages?.length) || ctx.allTasks.some(task => Boolean(task.section && task.section !== GITHUB_IMPORT_SECTION));
+    $: hasChecklistHierarchy = Boolean(ctx.stages?.length) || ctx.allTasks.some(task => (Boolean(task.parentId) || Boolean(task.checklistAncestors?.length)) &&
         (scope.sourceType !== 'file' || task.file.path === scope.sourceValue));
+    $: nativeChecklist = scope.sourceType === 'file' && (Boolean(ctx.stages?.length) || ctx.allTasks.some(task =>
+        task.section?.startsWith('Этап ') || task.section === GITHUB_IMPORT_SECTION));
     $: if (hasChecklistHierarchy && (groupBy !== 'section' || sortRules.length)) {
         if (groupBy === 'status') stageGrouping = 'status';
         groupBy = 'section';
@@ -208,11 +241,13 @@
         .map(key => ({ key, width: columnWidths[key] ?? defaultColumnWidth(key) }));
     $: tableWidth = 80 + tableColumns.reduce((sum, column) => sum + column.width, 0);
     $: hierarchy = buildTableHierarchy(ctx.allTasks, ctx.columns[ctx.columns.length - 1] || 'Done');
-    $: stageStatuses = new Map(collectTableStages(ctx.allTasks).map(stage => [stage.key, aggregateChecklistStatus(stage.rows, ctx.columns)]));
-    $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words, hierarchy, hasChecklistHierarchy),
+    $: stageStatuses = new Map(collectTableStages(ctx.allTasks, ctx.stages).map(stage => [stage.key, aggregateChecklistStatus(stage.rows, ctx.columns)]));
+    $: groups = groupTableStages(makeGroups(ctx.allTasks, query, groupBy, sliceBy, sliceValue, sortRules, words, hierarchy, hasChecklistHierarchy, ctx.stages),
         scope, groupBy === 'section' ? stageGrouping : 'none', hierarchy.stageProgress,
         lang === 'ru' ? 'Без группы этапов' : 'Ungrouped stages', stageStatuses, ctx.columns);
-    $: allStages = collectTableStages(ctx.allTasks);
+    $: allStages = collectTableStages(ctx.allTasks, ctx.stages).filter(stage => stage.key !== GITHUB_IMPORT_SECTION);
+    $: composerStages = allStages.filter(stage => stage.key.startsWith('Этап ')).map(stage => stage.key);
+    $: composerHabits = (plugin.settings.properties || []).filter(property => property.type === 'timer' || !property.type).map(property => property.name);
     $: stageGroupNames = [...new Set(Object.values(stageGroupDrafts).map(name => name.trim()).filter(Boolean))];
     $: stageGroupingFields = (scope.githubFields || []).filter(field => field.name !== 'Status' && field.name !== 'Этап' &&
         ['SINGLE_SELECT', 'ITERATION', 'MILESTONE', 'TEXT'].includes(field.type));
@@ -266,6 +301,12 @@
 
     function statusStyle(status: string): string { return `--status-color:${projectStatusColor(scope, status, ctx.columns)}`; }
     function stageStatus(group: RowGroup): string { return stageStatuses.get(group.key) || ctx.columns[0] || 'Backlog'; }
+    function defaultStatusForGroup(group: RowGroup): string {
+        if (groupBy === 'status') return group.key;
+        if (groupBy === 'section' && group.key.startsWith('Этап ')) return stageStatus(group);
+        if (groupBy === 'section' && group.key.startsWith('__root:')) return group.key.slice('__root:'.length);
+        return ctx.columns[0] || 'Backlog';
+    }
     function ancestorStatus(id: string): string {
         return aggregateChecklistStatus(ctx.allTasks.filter(task => task.checklistAncestors?.some(ancestor => ancestor.id === id)), ctx.columns);
     }
@@ -290,7 +331,7 @@
         showEstimateSum = config.showEstimateSum !== false;
         showSpentSum = config.showSpentSum === true;
         stageGrouping = config.stageGrouping || 'none';
-        if (ctx.allTasks.some(task => task.checklistAncestors?.length &&
+        if (ctx.allTasks.some(task => (task.parentId || task.checklistAncestors?.length) &&
             (scope.sourceType !== 'file' || task.file.path === scope.sourceValue)) && groupBy === 'status') {
             groupBy = 'section';
             stageGrouping = 'status';
@@ -301,7 +342,7 @@
     }
 
     function loadPreferences(id: string): void {
-        const structuredChecklist = ctx.allTasks.some(task => task.checklistAncestors?.length &&
+        const structuredChecklist = Boolean(ctx.stages?.length) || ctx.allTasks.some(task => (task.parentId || task.checklistAncestors?.length) &&
             (scope.sourceType !== 'file' || task.file.path === scope.sourceValue));
         loadedScopeId = id;
         initializedChecklistScope = '';
@@ -313,7 +354,7 @@
         if (!scope.githubProjectUrl && ctx.allTasks.some(task => task.checklistAncestors?.length || task.parentId || task.subtasks?.length)) visible.add('subIssues');
         hiddenGitHub = new Set();
         fieldOrder = [...fieldKeys];
-        groupBy = ctx.allTasks.some(task => task.section) ? 'section' : 'status';
+        groupBy = ctx.stages?.length || ctx.allTasks.some(task => task.section) ? 'section' : 'status';
         sliceBy = 'none';
         sliceValue = '';
         sortRules = [];
@@ -505,7 +546,7 @@
                 : task.subtasks?.length ? `${task.subtasks.filter(subtask => subtask.checked).length}/${task.subtasks.length}` : '';
             case 'iteration': return String(meta?.fields.Iteration || '');
             case 'priority': return task.priority || '';
-            case 'section': return task.section || '';
+            case 'section': return task.section === GITHUB_IMPORT_SECTION ? '' : task.section || '';
             case 'tags': return task.tags || '';
             case 'habit': return task.habitName || '';
             case 'start': return task.startDate || '';
@@ -588,14 +629,22 @@
 
     function makeGroups(tasks: ProjectTask[], _query: string, groupField: GroupField, sliceField: GroupField,
         selectedSlice: string, _sortRules: SortRule[], labels: typeof words, tree: ReturnType<typeof buildTableHierarchy>,
-        checklistHierarchy: boolean): RowGroup[] {
+        checklistHierarchy: boolean, stages: ProjectStage[] = []): RowGroup[] {
         const filtered = tasks.filter(task => matchesQuery(task) &&
             (sliceField === 'none' || !selectedSlice ||
-                (hasChecklistHierarchy && sliceField === 'status' ? stageStatuses.get(task.section || '') : groupValue(task, sliceField)) === selectedSlice));
+                (hasChecklistHierarchy && sliceField === 'status' ? hierarchyStatus(task, tree) : groupValue(task, sliceField)) === selectedSlice));
         const byGroup = new Map<string, ProjectTask[]>();
+        if (groupField === 'section') for (const stage of stages) {
+            const status = stageStatuses.get(stage.title) || ctx.columns[0] || 'Backlog';
+            if ((!_query.trim() || stage.title.toLowerCase().includes(_query.trim().toLowerCase())) &&
+                (!selectedSlice || sliceField === 'none' || sliceField === 'section' && stage.title === selectedSlice ||
+                    sliceField === 'status' && status === selectedSlice)) byGroup.set(stage.title, []);
+        }
         for (const task of filtered) {
             const progress = task.section ? tree.stageProgress.get(task.section) : undefined;
-            const key = checklistHierarchy && groupField === 'status' && task.section?.startsWith('Этап ') && progress?.total
+            const key = checklistHierarchy && groupField === 'section' && (!task.section || task.section === GITHUB_IMPORT_SECTION)
+                ? `__root:${rootTask(task, tree).status}`
+                : checklistHierarchy && groupField === 'status' && task.section?.startsWith('Этап ') && progress?.total
                 ? (progress.done === progress.total ? ctx.columns[ctx.columns.length - 1] || '' : ctx.columns[0] || '')
                 : groupValue(task, groupField);
             if (!byGroup.has(key)) byGroup.set(key, []);
@@ -607,7 +656,8 @@
         if (groupField === 'priority') entries.sort((a, b) =>
             ['high', 'medium', 'low', ''].indexOf(a[0]) - ['high', 'medium', 'low', ''].indexOf(b[0]));
         return entries.map(([key, rows]) => ({
-            key, label: key === 'all' ? labels.all : key || labels.noValue,
+            key, label: key === 'all' ? labels.all : key.startsWith('__root:') ? (lang === 'ru' ? 'Без этапа' : 'No stage') : key || labels.noValue,
+            stageId: stages.find(stage => stage.title === key)?.id,
             rows: rows.sort(compareTasks),
             estimate: rows.reduce((sum, task) => sum + (task.timeEstimatedSec || 0), 0),
             spent: rows.reduce((sum, task) => sum + task.timeSpentSec, 0)
@@ -619,9 +669,13 @@
         const counts = new Map<string, number>();
         if (hasChecklistHierarchy && sliceField === 'status') {
             for (const stage of collectTableStages(tasks.filter(matchesQuery))) {
+                if (!stage.key || stage.key === GITHUB_IMPORT_SECTION) continue;
                 const status = stageStatuses.get(stage.key) || ctx.columns[0] || 'Backlog';
                 counts.set(status, (counts.get(status) || 0) + 1);
             }
+            const roots = new Map(tasks.filter(task => (!task.section || task.section === GITHUB_IMPORT_SECTION) && matchesQuery(task))
+                .map(task => { const root = rootTask(task, hierarchy); return [root.id, root] as const; }));
+            for (const root of roots.values()) counts.set(root.status, (counts.get(root.status) || 0) + 1);
             return [...counts].sort(([a], [b]) => ctx.columns.indexOf(a) - ctx.columns.indexOf(b))
                 .map(([key, count]) => ({ key, label: key, count }));
         }
@@ -640,11 +694,26 @@
     }
 
     function toggleSort(field: Field | 'title'): void {
+        if (hasChecklistHierarchy) return;
         const current = sortRules.find(rule => rule.field === field);
         sortRules = current?.direction === -1 ? sortRules.filter(rule => rule.field !== field) :
             current ? sortRules.map(rule => rule.field === field ? { field, direction: -1 } : rule) :
             [...sortRules, { field, direction: 1 }];
         savePreferences();
+    }
+
+    function rootTask(task: ProjectTask, tree: ReturnType<typeof buildTableHierarchy>): ProjectTask {
+        const visited = new Set<string>();
+        while (task.parentId && tree.taskById.has(task.parentId) && !visited.has(task.id)) {
+            visited.add(task.id);
+            task = tree.taskById.get(task.parentId)!;
+        }
+        return task;
+    }
+
+    function hierarchyStatus(task: ProjectTask, tree: ReturnType<typeof buildTableHierarchy>): string {
+        return task.section && task.section !== GITHUB_IMPORT_SECTION
+            ? stageStatuses.get(task.section) || ctx.columns[0] || 'Backlog' : rootTask(task, tree).status;
     }
 
     function reorderField(target: Field): void {
@@ -690,22 +759,6 @@
         const next = new Set(collapsedTasks);
         if (next.has(id)) next.delete(id); else next.add(id);
         collapsedTasks = next;
-    }
-
-    async function createChecklistChild(): Promise<void> {
-        const target = addingChild;
-        const title = childName.trim();
-        if (!target || !title || busy) return;
-        busy = true;
-        try {
-            if (target.kind === 'stage') await addChecklistStageChild(app, target.task.file, target.stage, title);
-            else if (target.kind === 'group') await addChecklistGroupChild(app, target.task.file, ctx.allTasks, target.parent, title);
-            else await addChecklistSubtask(app, target.task, ctx.allTasks, title);
-            addingChild = null;
-            childName = '';
-            ctx.onRefresh();
-        } catch (error) { new Notice(String(error)); }
-        finally { busy = false; }
     }
 
     function toggleSelect(id: string): void {
@@ -855,7 +908,9 @@
                 throw new Error(lang === 'ru' ? 'Строка задачи изменилась. Обновите таблицу.' : 'The task line moved. Refresh the table.');
             }
             const checked = task.status !== ctx.columns[ctx.columns.length - 1];
-            await dataEngine.toggleSubtask(task.file, task.sourceLine, checked);
+            await dataEngine.saveTask(task.file, projectTaskToData(task, seconds => plugin.formatTime(seconds), {
+                status: checked ? ctx.columns.at(-1) || 'Done' : ctx.columns[0] || 'Backlog'
+            }), true, task.name, ctx.columns, task.blockId, task.sourceLine);
             ctx.onRefresh();
         } catch (error) { new Notice(String(error)); }
         finally { busy = false; }
@@ -878,8 +933,9 @@
     }
 
     function openTask(task: ProjectTask): void {
-        if (task.notePath) {
-            void app.workspace.openLinkText(task.notePath, '', false);
+        const noteLink = checklistNoteLink(task);
+        if (noteLink) {
+            void app.workspace.openLinkText(noteLink, task.file.path, false);
             return;
         }
         if (scope.sourceType === 'file' && task.sourceLine !== undefined) {
@@ -888,6 +944,14 @@
         }
         const link = task.blockId ? `${task.file.path}#^${task.blockId}` : task.file.path;
         void app.workspace.openLinkText(link, '', false);
+    }
+
+    async function openNodeNote(key: string): Promise<void> {
+        try {
+            const link = await dataEngine.checklistNodeLink(scope, key);
+            if (link) await app.workspace.openLinkText(link, scope.sourceValue, false);
+            else new Notice(lang === 'ru' ? 'Обнови проект, чтобы создать заметку этапа' : 'Refresh the project to create its root note');
+        } catch (error) { new Notice(String(error)); }
     }
 
     function openTaskIndex(): void {
@@ -914,27 +978,80 @@
             ctx.columns, true, async data => {
                 await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
                 ctx.onRefresh();
-            }).open();
+            }, [], task.notePath || task.file.path).open();
     }
 
-    function addForGroup(group: RowGroup): void {
-        addingGroup = group.key;
+    function imageActionContext(task: ProjectTask, event: MouseEvent) {
+        const ownerDocument = (event.currentTarget as HTMLElement).ownerDocument;
+        return { app, dataEngine, scope, task, lang, ownerDocument, onRefresh: ctx.onRefresh };
+    }
+
+    function openImageMenu(event: MouseEvent, task: ProjectTask): void {
+        actionMenu = '';
+        showProjectImageMenu(event, imageActionContext(task, event), () => editTask(task));
+    }
+
+    async function deleteTableTask(task: ProjectTask): Promise<void> {
+        const confirmed = await new Promise<boolean>(resolve => {
+            const modal = new Modal(app);
+            let settled = false;
+            const finish = (value: boolean): void => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+                modal.close();
+            };
+            modal.contentEl.createEl('p', { text: lang === 'ru' ? `Удалить задачу «${task.name}»?` : `Delete “${task.name}”?` });
+            const actions = modal.contentEl.createDiv('modal-button-container');
+            new ButtonComponent(actions).setButtonText(lang === 'ru' ? 'Отмена' : 'Cancel').onClick(() => finish(false));
+            new ButtonComponent(actions).setButtonText(lang === 'ru' ? 'Удалить' : 'Delete').setWarning().onClick(() => finish(true));
+            modal.onClose = () => { if (!settled) { settled = true; resolve(false); } };
+            modal.open();
+        });
+        if (!confirmed) return;
+        try {
+            await dataEngine.deleteTask(task, scope.sourceType === 'file');
+            ctx.onRefresh();
+        } catch (error) { new Notice(String(error)); }
+    }
+
+    function openQuickAdd(status = ctx.columns[0] || 'Backlog', section = '', placement: TaskPlacement = { kind: 'root' }, anchor = 'top'): void {
+        if (busy) return;
+        quickAddOpen = true;
+        quickAnchor = anchor;
         newName = '';
+        newStatus = status;
+        newSection = section;
+        newDescription = '';
+        newPriority = '';
+        newStart = '';
+        newDue = '';
+        newEstimate = '';
+        newTags = '';
+        newHabit = '';
+        quickPlacement = placement;
     }
 
-    async function createItem(group: RowGroup): Promise<void> {
+    function closeQuickAdd(): void { quickAddOpen = false; quickAnchor = 'top'; }
+
+    async function createItem(): Promise<void> {
         const name = newName.trim();
         if (!name || busy) return;
         busy = true;
         try {
-            const data: Partial<TaskData> = { name, status: ctx.columns[0] || 'Backlog' };
-            if (groupBy === 'status' && group.key) data.status = group.key;
-            if (groupBy === 'priority' && group.key) data.priority = group.key;
-            if (groupBy === 'habit' && group.key) data.habitName = group.key;
-            if (groupBy === 'section' && group.key) data.section = group.key;
-            await dataEngine.createTask(scope, data);
-            addingGroup = null;
+            const data: Partial<TaskData> = { name, status: newStatus || ctx.columns[0] || 'Backlog',
+                description: newDescription.trim(), priority: newPriority, startDate: newStart,
+                endDate: newDue, timeEstimated: newEstimate, tags: newTags, habitName: newHabit };
+            const placement: TaskPlacement = quickPlacement.kind === 'root' || quickPlacement.kind === 'stage'
+                ? newSection ? { kind: 'stage', section: newSection } : { kind: 'root' }
+                : quickPlacement;
+            if (placement.kind === 'stage') data.section = placement.section;
+            await dataEngine.createTask(scope, data, placement);
+            closeQuickAdd();
             newName = '';
+            newDescription = '';
+            quickPlacement = { kind: 'root' };
+            if (query || sliceValue) { query = ''; sliceValue = ''; savePreferences(); }
             ctx.onRefresh();
         } catch (error) { new Notice(String(error)); }
         finally { busy = false; }
@@ -997,7 +1114,8 @@
     }
 </script>
 
-<svelte:window on:keydown={(event) => { if (event.key === 'Escape') { viewMenuOpen = false; stageGroupEditorOpen = false; } }} />
+<svelte:window on:keydown={(event) => { if (event.key === 'Escape') { viewMenuOpen = false; stageGroupEditorOpen = false; openStatusForId = ''; } }}
+    on:click={() => openStatusForId = ''} />
 
 <div class="project-table-shell">
     <nav class="saved-view-tabs" aria-label={lang === 'ru' ? 'Представления таблицы' : 'Table views'}>
@@ -1020,6 +1138,7 @@
             {#if query}<button class="clear-query" title={words.clear} on:click={() => { query = ''; savePreferences(); }}><span use:icon={'x'}></span></button>{/if}
         </label>
         <span class="result-count">{totalVisible} {words.items}</span>
+        <button class="quick-add-trigger" on:click={() => openQuickAdd()}><span use:icon={'plus'}></span>{words.add}</button>
         {#if viewHasChanges}
             <div class="view-changes">
                 <button on:click={discardViewChanges}>{lang === 'ru' ? 'Отменить' : 'Discard'}</button>
@@ -1027,6 +1146,7 @@
             </div>
         {/if}
         <div class="toolbar-actions">
+            <button title={lang === 'ru' ? 'Настроить статусы' : 'Manage statuses'} on:click={() => plugin.openProjectStatusEditor(scope)}><span use:icon={'list-filter'}></span><span class="action-label">{lang === 'ru' ? 'Статусы' : 'Statuses'}</span></button>
             {#if hasSections}
                 <button class:active={stageGroupEditorOpen} title={lang === 'ru' ? 'Группы этапов' : 'Stage groups'} aria-label={lang === 'ru' ? 'Группы этапов' : 'Stage groups'} on:click={openStageGroupEditor}><span use:icon={'folders'}></span><span class="action-label">{lang === 'ru' ? 'Группы этапов' : 'Stage groups'}</span></button>
             {/if}
@@ -1043,6 +1163,14 @@
         title={lang === 'ru' ? 'Перетащите для изменения высоты. Двойной щелчок — компактный вид.' : 'Drag to resize height. Double-click for compact layout.'}
         on:dblclick={() => { toolbarHeight = 44; saveToolbarHeight(); }}
         on:keydown={(event) => { if (['ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) { event.preventDefault(); toolbarHeight = event.key === 'Home' ? 44 : Math.max(40, Math.min(180, toolbarHeight + (event.key === 'ArrowDown' ? 8 : -8))); saveToolbarHeight(); } }}></div>
+
+    {#if quickAddOpen && quickAnchor === 'top'}
+        <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+            showStage={nativeChecklist} busy={busy} parentLabel={creationParentLabel()}
+            bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+            bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+            bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
+    {/if}
 
     {#if viewMenuOpen}
         <button class="view-menu-dismiss" aria-label={lang === 'ru' ? 'Закрыть настройки вида' : 'Close view settings'} on:click={() => viewMenuOpen = false}></button>
@@ -1153,11 +1281,11 @@
                 </colgroup>
                 <thead><tr>
                     <th class="row-index"><input type="checkbox" aria-label={words.selectAll} checked={totalVisible > 0 && groups.every(group => group.rows.every(task => ctx.selectedTasks.has(task.id)))} on:change={toggleSelectAll} /></th>
-                    <th class="title-column" use:resizeColumn={{ key: 'title', label: words.title, width: columnWidths.title ?? defaultColumnWidth('title') }}><button on:click={() => toggleSort('title')}>{words.title}{#if sortRules.find(rule => rule.field === 'title')?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === 'title')?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button></th>
+                    <th class="title-column" use:resizeColumn={{ key: 'title', label: words.title, width: columnWidths.title ?? defaultColumnWidth('title') }}><button disabled={hasChecklistHierarchy} title={hasChecklistHierarchy ? (lang === 'ru' ? 'Порядок иерархии меняется перетаскиванием задач' : 'Reorder the hierarchy by dragging tasks') : ''} on:click={() => toggleSort('title')}>{words.title}{#if sortRules.find(rule => rule.field === 'title')?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === 'title')?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button></th>
                     {#each shownFields as field (field)}
                         <th class:date-column={field === 'start' || field === 'due'} draggable={!resizingColumn} on:dragstart={() => draggedField = field} on:dragover|preventDefault on:drop={() => reorderField(field)}
                             use:resizeColumn={{ key: `field:${field}`, label: fieldLabel(field), width: columnWidths[`field:${field}`] ?? defaultColumnWidth(`field:${field}`) }}>
-                            <button on:click={() => toggleSort(field)}>{fieldLabel(field)}{#if sortRules.find(rule => rule.field === field)?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === field)?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button>
+                            <button disabled={hasChecklistHierarchy} title={hasChecklistHierarchy ? (lang === 'ru' ? 'Порядок иерархии меняется перетаскиванием задач' : 'Reorder the hierarchy by dragging tasks') : ''} on:click={() => toggleSort(field)}>{fieldLabel(field)}{#if sortRules.find(rule => rule.field === field)?.direction === 1}<span use:icon={'arrow-up'}></span>{:else if sortRules.find(rule => rule.field === field)?.direction === -1}<span use:icon={'arrow-down'}></span>{/if}</button>
                             <button class="header-hide" title={words.hide} on:click={() => setVisible(field)}><span use:icon={'x'}></span></button>
                         </th>
                     {/each}
@@ -1190,38 +1318,48 @@
                                     </button>
                                     <span class="stage-collection-icon" use:icon={group.collection.status ? 'circle-dot' : 'folders'}></span>
                                     <button class="stage-collection-title" on:click={() => toggleStageGroup(group.collection!.key)}>{group.collection.label}</button>
-                                    <span class="group-count">{group.collection.stages} {lang === 'ru' ? 'этапов' : 'stages'}</span>
-                                    <SubIssuesProgress done={group.collection.done} total={group.collection.stages} label={lang === 'ru' ? 'Выполнено этапов' : 'Completed stages'} />
+                                    {#if group.collection.stages}<span class="group-count">{group.collection.stages} {lang === 'ru' ? 'этапов' : 'stages'}</span>{/if}
+                                    {#if group.collection.items}<span class="group-count">{group.collection.items} {lang === 'ru' ? 'задач без этапа' : 'items without a stage'}</span>{/if}
+                                    {#if group.collection.stages}<SubIssuesProgress done={group.collection.done} total={group.collection.stages} label={lang === 'ru' ? 'Выполнено этапов' : 'Completed stages'} />{/if}
+                                    {#if group.collection.status}<button class="collection-add" on:click={() => openQuickAdd(group.collection!.status, '', { kind: 'root' }, `collection:${group.collection!.key}`)}><span use:icon={'plus'}></span>{words.add}</button>{/if}
                                 </div>
                             </td></tr>
+                            {#if quickAddOpen && quickAnchor === `collection:${group.collection.key}`}
+                                <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                    <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                        showStage={nativeChecklist} busy={busy} parentLabel={creationParentLabel()}
+                                        bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                        bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                        bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
+                                </td></tr>
+                            {/if}
                         {/if}
                         {#if !group.collection || !collapsedStageGroups.has(group.collection.key)}
                         {#if groupBy !== 'none'}
-                            {#if groupBy === 'section' && (group.key.startsWith('Этап ') || stageGrouping !== 'none')}
+                            {#if groupBy === 'section' && group.key.startsWith('Этап ')}
                             <tr class="stage-row" style={statusStyle(stageStatus(group))} on:dragover|preventDefault on:drop={() => dropTask(group)}>
                                 <td class="row-index"><span class="row-number">{group.key.match(/^Этап\s+(\d+)/)?.[1] || ''}</span></td>
                                 <td class="title-cell"><div class="stage-content">
                                     <button class="group-toggle" title={collapsed.has(group.key) ? (lang === 'ru' ? 'Развернуть этап' : 'Expand stage') : (lang === 'ru' ? 'Свернуть этап' : 'Collapse stage')}
                                         aria-expanded={!collapsed.has(group.key)} on:click={() => toggleGroup(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
                                     <span class="stage-icon" use:icon={stageIsDone(group.key) ? 'circle-check' : 'circle-dot'}></span>
-                                    <button class="stage-title" on:click={() => toggleGroup(group.key)}>{group.label}</button>
+                                    <button class="stage-title" title={words.open} on:click={() => void openNodeNote(stageKey(group))}>{group.label}</button>
                                     {#if scope.githubNativeItems?.[stageKey(group)]?.url}
                                         <a class="github-item-link" href={scope.githubNativeItems[stageKey(group)]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
                                     {/if}
-                                    {#if group.rows[0]}
                                         <button class="add-subissue" title={lang === 'ru' ? 'Добавить задачу в этап' : 'Add issue to stage'}
                                             aria-label={`${group.label}: ${lang === 'ru' ? 'Добавить задачу' : 'Add issue'}`}
-                                            on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== group.key)); addingChild = { kind: 'stage', stage: group.key, task: group.rows[0]! }; childName = ''; }}><span use:icon={'plus'}></span></button>
+                                            on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== group.key)); openQuickAdd(stageStatus(group), group.key, { kind: 'root' }, `stage:${group.key}`); }}><span use:icon={'plus'}></span></button>
                                         <span class="row-action-wrap">
                                             <button class="row-menu-toggle" title={lang === 'ru' ? 'Действия этапа' : 'Stage actions'} aria-label={`${group.label}: ${lang === 'ru' ? 'Действия' : 'Actions'}`}
                                                 on:click={() => actionMenu = actionMenu === `stage:${group.key}` ? '' : `stage:${group.key}`}><span use:icon={'ellipsis'}></span></button>
                                             {#if actionMenu === `stage:${group.key}`}<div class="row-action-menu" role="menu">
+                                                <button role="menuitem" on:click={() => { void openNodeNote(stageKey(group)); actionMenu = ''; }}>{lang === 'ru' ? 'Открыть заметку этапа' : 'Open stage note'}</button>
                                                 <button role="menuitem" on:click={() => { toggleGroup(group.key); actionMenu = ''; }}>{collapsed.has(group.key) ? (lang === 'ru' ? 'Развернуть' : 'Expand') : (lang === 'ru' ? 'Свернуть' : 'Collapse')}</button>
-                                                <button role="menuitem" on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== group.key)); addingChild = { kind: 'stage', stage: group.key, task: group.rows[0]! }; childName = ''; actionMenu = ''; }}>{lang === 'ru' ? 'Добавить задачу' : 'Add issue'}</button>
+                                                <button role="menuitem" on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== group.key)); openQuickAdd(stageStatus(group), group.key, { kind: 'root' }, `stage:${group.key}`); actionMenu = ''; }}>{lang === 'ru' ? 'Добавить задачу' : 'Add issue'}</button>
                                                 {#if scope.githubNativeItems?.[stageKey(group)]?.url}<a role="menuitem" href={scope.githubNativeItems[stageKey(group)]!.url} target="_blank" rel="noopener noreferrer" on:click={() => actionMenu = ''}>{lang === 'ru' ? 'Открыть в GitHub' : 'Open on GitHub'}</a>{/if}
                                             </div>{/if}
                                         </span>
-                                    {/if}
                                 </div></td>
                                 {#each shownFields as field (field)}
                                     <td class:field-status={field === 'status'}>
@@ -1235,7 +1373,16 @@
                                 {#each customFields as field (field.id)}<td>{#if field.name === 'Этап'}<span class="plain-value">{group.label}</span>{/if}</td>{/each}
                                 <td class="end-cell"></td>
                             </tr>
-                            {:else}
+                            {#if quickAddOpen && quickAnchor === `stage:${group.key}`}
+                                <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                    <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                        showStage={nativeChecklist} busy={busy} parentLabel={creationParentLabel()}
+                                        bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                        bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                        bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
+                                </td></tr>
+                            {/if}
+                            {:else if groupBy !== 'section'}
                             <tr class="group-row" style={groupBy === 'status' ? statusStyle(group.key) : ''} on:dragover|preventDefault on:drop={() => dropTask(group)}><td colspan={shownFields.length + customFields.length + 3}>
                                 <button class="group-toggle" title={group.label} aria-label={group.label} on:click={() => toggleGroup(group.key)} aria-expanded={!collapsed.has(group.key)}><span use:icon={collapsed.has(group.key) ? 'chevron-right' : 'chevron-down'}></span></button>
                                 <span class:priority-high={groupBy === 'priority' && group.key === 'high'} class:priority-medium={groupBy === 'priority' && group.key === 'medium'} class:priority-low={groupBy === 'priority' && group.key === 'low'} class="group-dot"></span>
@@ -1244,14 +1391,6 @@
                                 {#if showEstimateSum}<span class="group-sum">{words.estimate}: {plugin.formatTime(group.estimate)}</span>{/if}
                                 {#if showSpentSum}<span class="group-sum">{words.spent}: {plugin.formatTime(group.spent)}</span>{/if}
                             </td></tr>
-                            {/if}
-                            {#if addingChild?.kind === 'stage' && addingChild.stage === group.key}
-                                <tr class="subissue-add-row"><td class="row-index"></td><td colspan={shownFields.length + customFields.length + 2}>
-                                    <input bind:value={childName} use:focus placeholder={lang === 'ru' ? 'Название задачи' : 'Issue title'}
-                                        on:keydown={(event) => { if (event.key === 'Enter') void createChecklistChild(); if (event.key === 'Escape') addingChild = null; }} />
-                                    <button on:click={() => void createChecklistChild()}>{lang === 'ru' ? 'Добавить' : 'Add'}</button>
-                                    <button on:click={() => addingChild = null}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
-                                </td></tr>
                             {/if}
                         {/if}
                         {#if !collapsed.has(group.key)}
@@ -1263,13 +1402,13 @@
                                             <button class="group-toggle" title={collapsed.has(task.section) ? (lang === 'ru' ? 'Развернуть этап' : 'Expand stage') : (lang === 'ru' ? 'Свернуть этап' : 'Collapse stage')}
                                                 aria-expanded={!collapsed.has(task.section)} on:click={() => toggleGroup(task.section || '')}><span use:icon={collapsed.has(task.section) ? 'chevron-right' : 'chevron-down'}></span></button>
                                             <span class="stage-icon" use:icon={stageIsDone(task.section || '') ? 'circle-check' : 'circle-dot'}></span>
-                                            <button class="stage-title" on:click={() => toggleGroup(task.section || '')}>{task.section}</button>
+                                            <button class="stage-title" title={words.open} on:click={() => void openNodeNote(stageKeyForTask(task))}>{task.section}</button>
                                             {#if scope.githubNativeItems?.[stageKeyForTask(task)]?.url}
                                                 <a class="github-item-link" href={scope.githubNativeItems[stageKeyForTask(task)]!.url} target="_blank" rel="noopener noreferrer" title="Open stage Issue on GitHub"><span use:icon={'external-link'}></span></a>
                                             {/if}
                                             <button class="add-subissue" title={lang === 'ru' ? 'Добавить задачу в этап' : 'Add issue to stage'}
                                                 aria-label={`${task.section}: ${lang === 'ru' ? 'Добавить задачу' : 'Add issue'}`}
-                                                on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== task.section)); addingChild = { kind: 'stage', stage: task.section || '', task }; childName = ''; }}><span use:icon={'plus'}></span></button>
+                                                on:click={() => { collapsed = new Set([...collapsed].filter(key => key !== task.section)); openQuickAdd(stageStatuses.get(task.section || '') || ctx.columns[0], task.section || '', { kind: 'root' }, `stage:${task.section}`); }}><span use:icon={'plus'}></span></button>
                                         </div></td>
                                         {#each shownFields as field (field)}
                                             <td class:field-status={field === 'status'}>
@@ -1281,12 +1420,13 @@
                                         {#each customFields as field (field.id)}<td>{#if field.name === 'Этап'}<span class="plain-value">{task.section}</span>{/if}</td>{/each}
                                         <td class="end-cell"></td>
                                     </tr>
-                                    {#if addingChild?.kind === 'stage' && addingChild.stage === task.section}
-                                        <tr class="subissue-add-row"><td class="row-index"></td><td colspan={shownFields.length + customFields.length + 2}>
-                                            <input bind:value={childName} use:focus placeholder={lang === 'ru' ? 'Название задачи' : 'Issue title'}
-                                                on:keydown={(event) => { if (event.key === 'Enter') void createChecklistChild(); if (event.key === 'Escape') addingChild = null; }} />
-                                            <button on:click={() => void createChecklistChild()}>{lang === 'ru' ? 'Добавить' : 'Add'}</button>
-                                            <button on:click={() => addingChild = null}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
+                                    {#if quickAddOpen && quickAnchor === `stage:${task.section}`}
+                                        <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                            <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                                showStage={nativeChecklist} busy={busy} parentLabel={creationParentLabel()}
+                                                bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                                bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                                bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
                                         </td></tr>
                                     {/if}
                                 {/if}
@@ -1301,20 +1441,20 @@
                                                     <span use:icon={collapsedParents.has(ancestor.id) ? 'chevron-right' : 'chevron-down'}></span>
                                                 </button>
                                                 <span use:icon={hierarchy.groupProgress.get(ancestor.id)?.done === hierarchy.groupProgress.get(ancestor.id)?.total ? 'circle-check' : 'circle-dot'} class="checklist-parent-icon"></span>
-                                                <button class="checklist-parent-title" title={words.open} on:click={() => void openChecklistParent(task, ancestor.sourceLine)}>{ancestor.title}</button>
+                                                <button class="checklist-parent-title" title={words.open} on:click={() => void openNodeNote(`group:${ancestor.id}`)}>{ancestor.title}</button>
                                                 {#if scope.githubNativeItems?.[`group:${ancestor.id}`]?.url}
                                                     <a class="github-item-link" href={scope.githubNativeItems[`group:${ancestor.id}`]!.url} target="_blank" rel="noopener noreferrer" title="Open parent Issue on GitHub"><span use:icon={'external-link'}></span></a>
                                                 {/if}
                                                 <span class="group-count">{hierarchy.groupProgress.get(ancestor.id)?.done || 0}/{hierarchy.groupProgress.get(ancestor.id)?.total || 0}</span>
                                                 <button class="add-subissue" title={lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'} aria-label={`${ancestor.title}: ${lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}`}
-                                                    on:click={() => { collapsedParents = new Set([...collapsedParents].filter(id => id !== ancestor.id)); addingChild = { kind: 'group', parent: ancestor, task }; childName = ''; }}><span use:icon={'plus'}></span></button>
+                                                    on:click={() => { collapsedParents = new Set([...collapsedParents].filter(id => id !== ancestor.id)); openQuickAdd(ancestorStatus(ancestor.id), task.section || '', { kind: 'group', parent: ancestor, task }, `group:${ancestor.id}`); }}><span use:icon={'plus'}></span></button>
                                                 <span class="row-action-wrap">
                                                     <button class="row-menu-toggle" title={lang === 'ru' ? 'Действия задачи' : 'Issue actions'} aria-label={`${ancestor.title}: ${lang === 'ru' ? 'Действия' : 'Actions'}`}
                                                         on:click={() => actionMenu = actionMenu === `group:${ancestor.id}` ? '' : `group:${ancestor.id}`}><span use:icon={'ellipsis'}></span></button>
                                                     {#if actionMenu === `group:${ancestor.id}`}<div class="row-action-menu" role="menu">
                                                         <button role="menuitem" on:click={() => { toggleParent(ancestor.id); actionMenu = ''; }}>{collapsedParents.has(ancestor.id) ? (lang === 'ru' ? 'Развернуть' : 'Expand') : (lang === 'ru' ? 'Свернуть' : 'Collapse')}</button>
-                                                        <button role="menuitem" on:click={() => { collapsedParents = new Set([...collapsedParents].filter(id => id !== ancestor.id)); addingChild = { kind: 'group', parent: ancestor, task }; childName = ''; actionMenu = ''; }}>{lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}</button>
-                                                        <button role="menuitem" on:click={() => { void openChecklistParent(task, ancestor.sourceLine); actionMenu = ''; }}>{lang === 'ru' ? 'Открыть в Obsidian' : 'Open in Obsidian'}</button>
+                                                        <button role="menuitem" on:click={() => { collapsedParents = new Set([...collapsedParents].filter(id => id !== ancestor.id)); openQuickAdd(ancestorStatus(ancestor.id), task.section || '', { kind: 'group', parent: ancestor, task }, `group:${ancestor.id}`); actionMenu = ''; }}>{lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}</button>
+                                                        <button role="menuitem" on:click={() => { void openNodeNote(`group:${ancestor.id}`); actionMenu = ''; }}>{lang === 'ru' ? 'Открыть в Obsidian' : 'Open in Obsidian'}</button>
                                                         {#if scope.githubNativeItems?.[`group:${ancestor.id}`]?.url}<a role="menuitem" href={scope.githubNativeItems[`group:${ancestor.id}`]!.url} target="_blank" rel="noopener noreferrer" on:click={() => actionMenu = ''}>{lang === 'ru' ? 'Открыть в GitHub' : 'Open on GitHub'}</a>{/if}
                                                     </div>{/if}
                                                 </span>
@@ -1329,18 +1469,19 @@
                                             {#each customFields as field (field.id)}<td>{#if field.name === 'Этап'}<span class="plain-value">{task.section}</span>{/if}</td>{/each}
                                             <td class="end-cell"></td>
                                         </tr>
-                                        {#if addingChild?.kind === 'group' && addingChild.parent.id === ancestor.id}
-                                            <tr class="subissue-add-row"><td class="row-index"></td><td colspan={shownFields.length + customFields.length + 2}>
-                                                <input bind:value={childName} use:focus placeholder={lang === 'ru' ? 'Название подзадачи' : 'Sub-issue title'}
-                                                    on:keydown={(event) => { if (event.key === 'Enter') void createChecklistChild(); if (event.key === 'Escape') addingChild = null; }} />
-                                                <button on:click={() => void createChecklistChild()}>{lang === 'ru' ? 'Добавить' : 'Add'}</button>
-                                                <button on:click={() => addingChild = null}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
+                                        {#if quickAddOpen && quickAnchor === `group:${ancestor.id}`}
+                                            <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                                <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                                    showStage={false} busy={busy} parentLabel={creationParentLabel()}
+                                                    bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                                    bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                                    bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
                                             </td></tr>
                                         {/if}
                                     {/if}
                                 {/each}
                                 {#if !hiddenTaskIds.has(task.id)}
-                                <tr style={statusStyle(task.status)} class:selected={ctx.selectedTasks.has(task.id)} draggable={sortRules.length === 0} on:dragstart={() => draggedTask = task} on:dragend={() => draggedTask = null} on:dragover|preventDefault on:drop={() => void dropBefore(task, group)}>
+                                <tr style={statusStyle(task.status)} class:selected={ctx.selectedTasks.has(task.id)} draggable={sortRules.length === 0} on:dragstart={() => draggedTask = task} on:dragend={() => draggedTask = null} on:dragover|preventDefault on:drop={() => void dropBefore(task, group)} on:contextmenu={(event) => openImageMenu(event, task)}>
                                     <td class="row-index"><span class="row-number">{index + 1}</span><input type="checkbox" checked={ctx.selectedTasks.has(task.id)} aria-label={`${task.name}: ${words.selected}`} on:change={() => toggleSelect(task.id)} /></td>
                                     <td class="title-cell">
                                         <div class="title-inner" style={`padding-left: ${((task.checklistAncestors?.length || 0) + (hierarchy.taskDepth.get(task.id) || 0)) * 20}px`}>
@@ -1362,19 +1503,22 @@
                                             <a class="github-item-link" href={scope.githubNativeItems?.[`leaf:${task.id}`]?.url || scope.githubBindings?.[task.id]?.meta?.url} target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label={`${task.name}: Open on GitHub`}><span use:icon={'external-link'}></span></a>
                                         {/if}
                                         {#if task.subtasks?.length}<span class="subtask-count" title="Subtasks"><span use:icon={'list-checks'}></span>{task.subtasks.filter(subtask => subtask.checked).length}/{task.subtasks.length}</span>{/if}
-                                        {#if scope.sourceType === 'file' && task.section?.startsWith('Этап ')}
+                                        {#if scope.sourceType === 'file'}
                                             <button class="add-subissue" title={lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'} aria-label={`${task.name}: ${lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}`}
-                                                on:click={() => { collapsedTasks = new Set([...collapsedTasks].filter(id => id !== task.id)); addingChild = { kind: 'task', task }; childName = ''; }}><span use:icon={'plus'}></span></button>
+                                                on:click={() => { collapsedTasks = new Set([...collapsedTasks].filter(id => id !== task.id)); openQuickAdd(task.status, task.section || '', { kind: 'task', parent: task }, `task:${task.id}`); }}><span use:icon={'plus'}></span></button>
                                         {/if}
-                                        {#if scope.sourceType === 'file' && task.section?.startsWith('Этап ')}
+                                        {#if scope.sourceType === 'file'}
                                             <span class="row-action-wrap">
                                                 <button class="row-menu-toggle" title={lang === 'ru' ? 'Действия задачи' : 'Issue actions'} aria-label={`${task.name}: ${lang === 'ru' ? 'Действия' : 'Actions'}`}
                                                     on:click={() => actionMenu = actionMenu === `task:${task.id}` ? '' : `task:${task.id}`}><span use:icon={'ellipsis'}></span></button>
                                                 {#if actionMenu === `task:${task.id}`}<div class="row-action-menu" role="menu">
                                                     {#if hierarchy.taskChildren.get(task.id)?.length}<button role="menuitem" on:click={() => { toggleTaskChildren(task.id); actionMenu = ''; }}>{collapsedTasks.has(task.id) ? (lang === 'ru' ? 'Развернуть' : 'Expand') : (lang === 'ru' ? 'Свернуть' : 'Collapse')}</button>{/if}
-                                                    <button role="menuitem" on:click={() => { collapsedTasks = new Set([...collapsedTasks].filter(id => id !== task.id)); addingChild = { kind: 'task', task }; childName = ''; actionMenu = ''; }}>{lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}</button>
+                                                    <button role="menuitem" on:click={() => { collapsedTasks = new Set([...collapsedTasks].filter(id => id !== task.id)); openQuickAdd(task.status, task.section || '', { kind: 'task', parent: task }, `task:${task.id}`); actionMenu = ''; }}>{lang === 'ru' ? 'Добавить подзадачу' : 'Add sub-issue'}</button>
                                                     <button role="menuitem" on:click={() => { void toggleChecklistItem(task); actionMenu = ''; }}>{task.status === ctx.columns[ctx.columns.length - 1] ? (lang === 'ru' ? 'Вернуть в работу' : 'Reopen') : (lang === 'ru' ? 'Отметить выполненной' : 'Mark done')}</button>
                                                     <button role="menuitem" on:click={() => { openTask(task); actionMenu = ''; }}>{lang === 'ru' ? 'Открыть в Obsidian' : 'Open in Obsidian'}</button>
+                                                    <button role="menuitem" on:click={(event) => { actionMenu = ''; attachProjectImageFromVault(imageActionContext(task, event)); }}>{lang === 'ru' ? 'Добавить изображение из хранилища' : 'Add image from vault'}</button>
+                                                    <button role="menuitem" on:click={(event) => { actionMenu = ''; attachProjectImagesFromDevice(imageActionContext(task, event)); }}>{lang === 'ru' ? 'Добавить изображения с устройства' : 'Add images from device'}</button>
+                                                    <button role="menuitem" on:click={() => { actionMenu = ''; void deleteTableTask(task); }}>{lang === 'ru' ? 'Удалить задачу' : 'Delete item'}</button>
                                                     {#if scope.githubNativeItems?.[`leaf:${task.id}`]?.url}<a role="menuitem" href={scope.githubNativeItems[`leaf:${task.id}`]!.url} target="_blank" rel="noopener noreferrer" on:click={() => actionMenu = ''}>{lang === 'ru' ? 'Открыть в GitHub' : 'Open on GitHub'}</a>{/if}
                                                 </div>{/if}
                                             </span>
@@ -1385,9 +1529,16 @@
                                     {#each shownFields as field (field)}
                                         <td class:field-status={field === 'status'} class:field-priority={field === 'priority'} class:cell-selected={selectedCells.has(cellKey(task, field))} on:click={(event) => selectCell(task, field, event)} on:dragover|preventDefault on:drop={(event) => { if (fillSource) { event.stopPropagation(); void fillCells(task, field); } }}>
                                             {#if field === 'status'}
-                                                <select class="status-pill" value={task.status} on:change={(event) => saveField(task, field, event.currentTarget.value)} aria-label={`${task.name}: ${words.status}`}>
-                                                    {#each ctx.columns as option}<option value={option}>{option}</option>{/each}
-                                                </select>
+                                                <button class="status-pill status-picker-button" aria-label={`${task.name}: ${words.status}`} aria-expanded={openStatusForId === task.id}
+                                                    on:click|stopPropagation={(event) => toggleStatusMenu(task, event)}>{task.status}<span use:icon={'chevron-down'}></span></button>
+                                                {#if openStatusForId === task.id}
+                                                    <div class="status-choice-menu" role="menu" aria-label={words.status} style={`top:${statusMenuTop}px;left:${statusMenuLeft}px`}>
+                                                        {#each ctx.columns as option}<button role="menuitem" class:chosen={option === task.status} style={statusStyle(option)}
+                                                            on:click|stopPropagation={() => { openStatusForId = ''; void saveField(task, field, option); }}>
+                                                            <span class="status-choice-dot"></span><span>{option}</span>{#if option === task.status}<span use:icon={'check'}></span>{/if}
+                                                        </button>{/each}
+                                                    </div>
+                                                {/if}
                                             {:else if field === 'priority'}
                                                 <select class="priority-pill" class:high={task.priority === 'high'} class:medium={task.priority === 'medium'} class:low={task.priority === 'low'} value={task.priority || ''} on:change={(event) => saveField(task, field, event.currentTarget.value)} aria-label={`${task.name}: ${words.priority}`}>
                                                     <option value="">{words.noValue}</option><option value="high">{priorityText('high')}</option><option value="medium">{priorityText('medium')}</option><option value="low">{priorityText('low')}</option>
@@ -1409,7 +1560,7 @@
                                                     <SubIssuesProgress stretch done={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.completed} total={(scope.githubNativeItems?.[`leaf:${task.id}`]?.meta || scope.githubBindings?.[task.id]?.meta)!.subIssues!.total} label={words.subIssues} />
                                                 {:else}<span class="plain-value" title={value(task, field)}>{value(task, field) || '—'}</span>{/if}
                                             {:else if field === 'section'}
-                                                <span class="plain-value" title={task.section || ''}>{task.section || '—'}</span>
+                                                <span class="plain-value" title={task.section === GITHUB_IMPORT_SECTION ? '' : task.section || ''}>{task.section === GITHUB_IMPORT_SECTION ? '—' : task.section || '—'}</span>
                                             {:else}
                                                 <span class="plain-value" title={value(task, field)}>{value(task, field) || '—'}</span>
                                             {/if}
@@ -1432,33 +1583,37 @@
                                     {/each}
                                     <td class="end-cell"></td>
                                 </tr>
-                                {#if addingChild?.kind === 'task' && addingChild.task.id === task.id}
-                                    <tr class="subissue-add-row"><td class="row-index"></td><td colspan={shownFields.length + customFields.length + 2}>
-                                        <input bind:value={childName} use:focus placeholder={lang === 'ru' ? 'Название подзадачи' : 'Sub-issue title'}
-                                            on:keydown={(event) => { if (event.key === 'Enter') void createChecklistChild(); if (event.key === 'Escape') addingChild = null; }} />
-                                        <button on:click={() => void createChecklistChild()}>{lang === 'ru' ? 'Добавить' : 'Add'}</button>
-                                        <button on:click={() => addingChild = null}>{lang === 'ru' ? 'Отмена' : 'Cancel'}</button>
+                                {#if quickAddOpen && quickAnchor === `task:${task.id}`}
+                                    <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                        <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                            showStage={false} busy={busy} parentLabel={creationParentLabel()}
+                                            bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                            bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                            bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
                                     </td></tr>
                                 {/if}
                                 {/if}
                                 {/if}
                             {/each}
-                            {#if !ctx.allTasks.some(item => item.checklistAncestors?.length)}
                             <tr class="add-row"><td colspan={shownFields.length + customFields.length + 3}>
-                                {#if addingGroup === group.key}
-                                    <span use:icon={'plus'}></span><input use:focus bind:value={newName} placeholder={words.add} on:keydown={(event) => { if (event.key === 'Enter') void createItem(group); if (event.key === 'Escape') addingGroup = null; }} />
-                                    <button on:click={() => void createItem(group)} disabled={!newName.trim() || busy}>{words.add}</button>
-                                {:else}
-                                    <button on:click={() => addForGroup(group)}><span use:icon={'plus'}></span>{words.add}</button>
-                                {/if}
+                                <button on:click={() => openQuickAdd(defaultStatusForGroup(group),
+                                    groupBy === 'section' && group.key.startsWith('Этап ') ? group.key : '', { kind: 'root' }, `row:${group.key}`)}><span use:icon={'plus'}></span>{words.add}</button>
                             </td></tr>
+                            {#if quickAddOpen && quickAnchor === `row:${group.key}`}
+                                <tr class="composer-row"><td colspan={shownFields.length + customFields.length + 3}>
+                                    <ProjectTaskComposer {scope} {lang} statuses={ctx.columns} stages={composerStages} habits={composerHabits}
+                                        showStage={nativeChecklist} busy={busy} parentLabel={creationParentLabel()}
+                                        bind:name={newName} bind:status={newStatus} bind:section={newSection} bind:priority={newPriority}
+                                        bind:startDate={newStart} bind:dueDate={newDue} bind:estimate={newEstimate} bind:tags={newTags}
+                                        bind:habit={newHabit} bind:description={newDescription} onCreate={() => void createItem()} onCancel={closeQuickAdd} />
+                                </td></tr>
                             {/if}
                         {/if}
                         {/if}
                     {/each}
                 </tbody>
             </table>
-            {#if !totalVisible && groupBy !== 'none'}<div class="no-results">{words.empty}<button on:click={() => { query = ''; sliceValue = ''; savePreferences(); }}>{words.clear}</button></div>{/if}
+            {#if !totalVisible && groupBy !== 'none' && !groups.some(group => group.stageId)}<div class="no-results">{words.empty}<button on:click={() => { query = ''; sliceValue = ''; savePreferences(); }}>{words.clear}</button></div>{/if}
         </div>
     </div>
     {#if lastBulk.length}<div class="undo-bar"><span>{lastBulk.length} {words.selected}</span><button on:click={() => void undoBulk()}>{lang === 'ru' ? 'Отменить' : 'Undo'}</button><button title="Dismiss" on:click={() => lastBulk = []}><span use:icon={'x'}></span></button></div>{/if}
@@ -1476,6 +1631,11 @@
     .saved-view-tabs .new-view { padding:5px 7px; }
     .view-tab-divider { align-self:center; width:1px; height:17px; margin:0 3px; background:var(--background-modifier-border); }
     .table-toolbar { box-sizing:border-box; display:flex; flex-wrap:wrap; align-content:center; align-items:center; gap:8px; flex:0 0 auto; min-height:40px; padding:4px 10px; background:var(--background-primary); overflow:auto; }
+    .quick-add-trigger, .collection-add { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+    .quick-add-trigger span, .collection-add span { width:14px; height:14px; }
+    .composer-row td { padding:0; border-bottom:1px solid var(--background-modifier-border); }
+    .composer-row :global(.composer) { max-height:42vh; overflow:auto; }
+    .collection-add { margin-left:8px; font-size:.72rem; }
     .toolbar-resize { display:block; flex:0 0 5px; width:100%; min-height:5px; height:5px; margin:0; padding:0; border:0; border-bottom:1px solid var(--background-modifier-border); border-radius:0; box-shadow:none; background:transparent; cursor:row-resize; touch-action:none; }
     .toolbar-resize:hover, .toolbar-resize:focus-visible { background:var(--interactive-accent); }
     .compact-toolbar { flex-wrap:nowrap; }
@@ -1539,6 +1699,7 @@
     .project-grid th:last-child, .project-grid td:last-child { border-right:0; }
     .project-grid thead th { position:sticky; z-index:5; top:0; height:31px; background:var(--background-primary); color:var(--text-muted); text-align:left; font-size:.74rem; font-weight:500; }
     .project-grid thead th > button { display:inline-flex; align-items:center; gap:5px; max-width:calc(100% - 22px); overflow:hidden; padding:3px 0; border:0; box-shadow:none; background:transparent; color:inherit; font:inherit; text-align:left; white-space:nowrap; }
+    .project-grid thead th > button:disabled { opacity:1; cursor:help; }
     .project-grid .add-field > button, .project-grid .title-column > button { max-width:100%; }
     .project-grid thead th > button.header-hide { position:absolute; right:9px; top:50%; transform:translateY(-50%); }
     .project-grid thead th > button span, .header-hide span { width:13px; height:13px; }
@@ -1616,13 +1777,20 @@
     .row-action-menu button, .row-action-menu a { display:block; width:100%; min-height:27px; padding:5px 8px; border:0; border-radius:4px; box-shadow:none; background:transparent; color:var(--text-normal); font-size:.75rem; text-align:left; text-decoration:none; white-space:nowrap; cursor:pointer; }
     .row-action-menu button:hover, .row-action-menu a:hover { background:var(--background-modifier-hover); }
     .task-disclosure { margin-left:-21px; margin-right:1px; }
-    .subissue-add-row td { height:36px; background:var(--background-primary); }
-    .subissue-add-row input { min-width:260px; width:40%; height:27px; margin:3px 8px 3px 12px; padding:3px 7px; }
-    .subissue-add-row button { height:26px; margin-right:5px; padding:2px 8px; }
     .group-count, .group-sum { margin-left:8px; padding:2px 6px; border:1px solid var(--background-modifier-border); border-radius:9px; background:var(--background-primary); color:var(--text-muted); font-size:.68rem; }
     .group-sum { border-radius:4px; }
     .status-pill, .priority-pill { box-sizing:border-box; max-width:100%; min-width:0; height:24px; padding:2px 19px 2px 8px; border:1px solid var(--background-modifier-border); border-radius:12px; background:var(--background-secondary); color:var(--text-normal); font-size:.73rem; }
     .status-pill { color:var(--status-color,var(--text-normal)); border-color:color-mix(in srgb,var(--status-color,var(--interactive-accent)) 45%,transparent); background:color-mix(in srgb,var(--status-color,var(--interactive-accent)) 13%,var(--background-primary)); }
+    .field-status { position:relative; }
+    .status-picker-button { display:inline-flex; align-items:center; gap:6px; padding-right:7px; cursor:pointer; }
+    .status-picker-button span { width:11px; height:11px; }
+    .status-choice-menu { position:fixed; z-index:1000; min-width:150px; max-height:240px; overflow:auto; padding:4px; border:1px solid var(--background-modifier-border); border-radius:6px; background:var(--background-primary); box-shadow:var(--shadow-l); }
+    .status-choice-menu button { display:flex; align-items:center; gap:8px; width:100%; min-height:29px; padding:4px 8px; border:0; border-radius:4px; box-shadow:none; background:transparent; color:var(--status-color); font-size:.76rem; text-align:left; }
+    .status-choice-menu button:hover, .status-choice-menu button.chosen { background:var(--background-modifier-hover); }
+    .status-choice-menu button span:last-child:not(:first-child) { flex-shrink:0; }
+    .status-choice-menu button span:nth-child(2) { flex:1; }
+    .status-choice-menu button span:nth-child(3) { width:13px; height:13px; }
+    .status-choice-dot { width:10px; height:10px; flex-shrink:0; border:2px solid currentColor; border-radius:50%; }
     .stage-row .stage-icon, .stage-collection-row .stage-collection-icon, .task-icon, .checklist-parent-icon { color:var(--status-color,var(--interactive-accent)); }
     .group-row .group-dot { border-color:var(--status-color,var(--interactive-accent)); }
     .priority-pill.high { background:color-mix(in srgb, var(--color-red) 13%, var(--background-primary)); }.priority-pill.medium { background:color-mix(in srgb, var(--color-yellow) 15%, var(--background-primary)); }.priority-pill.low { background:color-mix(in srgb, var(--color-blue) 13%, var(--background-primary)); }
@@ -1638,8 +1806,6 @@
     .project-grid .add-row td { height:36px; padding:0 16px; color:var(--text-muted); }
     .add-row button { display:inline-flex; align-items:center; gap:7px; padding:3px 0; border:0; box-shadow:none; background:transparent; color:var(--text-muted); font-size:.79rem; }
     .add-row button:hover { color:var(--text-normal); }.add-row span { display:inline-block; width:15px; height:15px; vertical-align:middle; }
-    .add-row input { min-width:200px; width:35%; height:27px; margin-left:7px; padding:3px 7px; font-size:.79rem; }
-    .add-row input + button { margin-left:10px; color:var(--text-accent); }
     .no-results { display:flex; flex-direction:column; align-items:center; gap:8px; padding:40px 16px; color:var(--text-muted); font-size:.82rem; }
     .no-results button { font-size:.77rem; }
     .undo-bar { position:absolute; z-index:15; right:16px; bottom:15px; display:flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid var(--background-modifier-border); border-radius:6px; background:var(--background-primary); box-shadow:var(--shadow-l); font-size:.76rem; }

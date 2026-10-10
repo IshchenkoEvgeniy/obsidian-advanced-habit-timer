@@ -1,4 +1,6 @@
+import { designEn } from '../../design/locales';
 export const en = {
+    ...designEn,
     // General
     total: "Total",
     save: "Save",
@@ -260,7 +262,7 @@ export const en = {
     estimated_time_label: "Estimated Time (e.g. 02:00:00)",
     start_date_label: "Start Date (YYYY-MM-DD)",
     end_date_label: "End Date (YYYY-MM-DD)",
-    task_cover_label: "Cover Image URL",
+    task_cover_label: "Cover image URL or vault path",
     task_color_label: "Color (CSS hex or name)",
     please_configure_projects: "Please configure your Projects Folder in settings.",
     select_habit_link: "Select a habit to link with this task...",

@@ -266,7 +266,9 @@ export class DashboardApiBridge {
             case 'task.toggleSubtask': {
                 const located = await this.locateTask(command.scopeId, command.taskId);
                 if (!located) return errorResult(this.revision, 'NOT_FOUND', 'Project task not found.');
-                await this.plugin.projectEngine.toggleSubtask(located.task.file, command.line, command.checked);
+                const subtask = located.task.subtasks?.find(candidate => candidate.line === command.line);
+                if (!subtask) return errorResult(this.revision, 'NOT_FOUND', 'Project subtask not found.');
+                await this.plugin.projectEngine.toggleSubtask(located.task.file, subtask, command.checked);
                 return { ok: true, data: { changedDomains: ['projects'] }, revision: this.revision };
             }
             case 'task.open': {

@@ -325,6 +325,17 @@ export class GitHubProjectsClient {
         return { id: updated.id, name: updated.name, type: updated.dataType, options: updated.options };
     }
 
+    async updateSingleSelectOptions(field: GitHubField,
+        options: { id?: string; name: string; color: string; description: string }[]): Promise<GitHubField> {
+        const data = await this.graphql<{ updateProjectV2Field: { projectV2Field: FieldNode } }>(
+            'mutation($input: UpdateProjectV2FieldInput!) { updateProjectV2Field(input: $input) { projectV2Field { ... on ProjectV2SingleSelectField { id name dataType options { id name color description } } } } }',
+            { input: { fieldId: field.id, singleSelectOptions: options } }
+        );
+        const updated = data.updateProjectV2Field.projectV2Field;
+        if (!updated?.options) throw new Error('GitHub did not update the status options.');
+        return { id: updated.id, name: updated.name, type: updated.dataType, options: updated.options };
+    }
+
     async updateTitle(item: GitHubItem, title: string): Promise<void> {
         if (item.contentType === 'DraftIssue') {
             await this.graphql('mutation($input: UpdateProjectV2DraftIssueInput!) { updateProjectV2DraftIssue(input: $input) { draftIssue { id } } }',

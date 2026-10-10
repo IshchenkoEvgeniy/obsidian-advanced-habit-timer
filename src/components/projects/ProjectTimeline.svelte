@@ -4,16 +4,21 @@
     import type HabitTimerPlugin from '../../main';
     import { t } from '../../i18n';
     import { TaskEditorModal } from '../../projects/modals/task-editor';
+    import ProjectTaskCreateForm from './ProjectTaskCreateForm.svelte';
+    import { showProjectImageMenu } from '../../projects/project-image-actions';
     import type { ProjectDataEngine } from '../../projects/project-data';
     import { projectTaskToData } from '../../projects/task-data';
     import { buildTimeline, type TimelineItem, type TimelineTaskInput } from '../../projects/timeline';
-    import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
+    import type { ProjectScopeDefinition, ProjectTask, TaskData } from '../../projects/types';
     import type { ViewContext } from '../../projects/views/base-view';
 
     export let plugin: HabitTimerPlugin;
     export let dataEngine: ProjectDataEngine;
     export let scope: ProjectScopeDefinition;
     export let ctx: ViewContext;
+    let createDefaults: Partial<TaskData> | null = null;
+    let createScopeId = '';
+    let createBusy = false;
 
     const icon: Action<HTMLElement, string> = (node, name) => {
         setIcon(node, name);
@@ -62,13 +67,16 @@
         new TaskEditorModal(plugin.app, plugin, initial, ctx.columns, true, async data => {
             await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
             ctx.onRefresh();
-        }).open();
+        }, [], task.notePath || task.file.path).open();
     }
     function createTask(): void {
-        new TaskEditorModal(plugin.app, plugin, { startDate: todayKey }, ctx.columns, false, async data => {
-            await dataEngine.createTask(scope, data);
-            ctx.onRefresh();
-        }).open();
+        if (createBusy) return;
+        createDefaults = { startDate: todayKey };
+        createScopeId = scope.id;
+    }
+    function openImageMenu(event: MouseEvent, task: ProjectTask): void {
+        showProjectImageMenu(event, { app: plugin.app, dataEngine, scope, task, lang,
+            ownerDocument: (event.currentTarget as HTMLElement).ownerDocument, onRefresh: ctx.onRefresh }, () => editTask(task));
     }
 </script>
 
@@ -80,7 +88,15 @@
             <span class="legend-item"><i class="legend-bar overdue"></i>{t(lang, 'timeline_overdue')}</span>
         </div>
         <span class="tl-range">{dateLabel(model.start)} — {dateLabel(model.end)}</span>
+        <button on:click={createTask}>{t(lang, 'add_new_task')}</button>
     </div>
+
+    {#if createDefaults && createScopeId === scope.id}
+        {#key createDefaults}
+            <ProjectTaskCreateForm {plugin} {dataEngine} {scope} {ctx}
+                initialData={createDefaults} bind:busy={createBusy} onClose={() => createDefaults = null} />
+        {/key}
+    {/if}
 
     {#if hasDated}
         <div class="tl-track">
@@ -117,6 +133,7 @@
                             style={barStyle(item)}
                             title={tooltip(item)}
                             aria-label={t(lang, 'edit_task')}
+                            on:contextmenu={(event) => openImageMenu(event, item.task as ProjectTask)}
                             on:click={() => editTask(item.task as ProjectTask)}
                         >
                             <span class="bar-name">{item.task.name}</span>
@@ -139,6 +156,7 @@
                                 style={`left:${item.offsetPct}%;--milestone-color:${item.done ? 'var(--text-success)' : item.overdue ? 'var(--text-error)' : taskColor(item.task as ProjectTask)}`}
                                 title={tooltip(item)}
                                 aria-label={t(lang, 'edit_task')}
+                                on:contextmenu={(event) => openImageMenu(event, item.task as ProjectTask)}
                                 on:click={() => editTask(item.task as ProjectTask)}
                             >
                                 <i class="diamond"></i>
@@ -167,7 +185,8 @@
             </header>
             <div class="nodates-grid">
                 {#each model.noDates as task (task.id)}
-                    <button class="nodates-card" title={t(lang, 'edit_task')} on:click={() => editTask(task as ProjectTask)}>
+                    <button class="nodates-card" title={t(lang, 'edit_task')} on:click={() => editTask(task as ProjectTask)}
+                        on:contextmenu={(event) => openImageMenu(event, task as ProjectTask)}>
                         <span class="nodates-name">{task.name}</span>
                         <span class="nodates-status">{task.status}</span>
                     </button>

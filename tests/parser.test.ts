@@ -133,8 +133,8 @@ describe('ProjectParser', () => {
             expect(tTime!.status).toBe('To Do');
 
             const tHabit = tasks.find(t => t.name === 'Task with habit');
-            // 'Reading' should be matched as habit
-            expect(tHabit!.habitName).toBe('Reading');
+            // The explicit vault link takes precedence over the legacy text label.
+            expect(tHabit!.habitName).toBe('Sleep');
 
             const tPriority = tasks.find(t => t.name === 'Task with priority');
             expect(tPriority!.priority).toBe('high');

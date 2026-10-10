@@ -14,6 +14,7 @@ beforeAll(async () => {
         import { render } from 'svelte/server'; export const renderTable = props => render(Table, { props }).body;`,
         resolveDir: process.cwd(), loader: 'js' }, bundle: true, platform: 'node', format: 'esm', write: false,
         plugins: [{ name: 'project-table-server-test', setup(builder) {
+            builder.onResolve({ filter: /^yaml$/ }, () => ({ path: resolve('node_modules/yaml/browser/index.js') }));
             builder.onResolve({ filter: /^obsidian$/ }, () => ({ path: resolve('tests/__mocks__/obsidian.ts') }));
             // Editing is not exercised by the render test; avoid loading the full plugin through its modal.
             builder.onResolve({ filter: /\/modals\/task-editor$/ }, () => ({ path: 'task-editor', namespace: 'table-test' }));

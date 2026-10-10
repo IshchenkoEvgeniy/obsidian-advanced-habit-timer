@@ -3,6 +3,7 @@
     import type { Action } from 'svelte/action';
     import type HabitTimerPlugin from '../../main';
     import { t } from '../../i18n';
+    import { checklistNoteLink } from '../../projects/checklist-notes';
     import { calculateProjectDashboard } from '../../projects/dashboard-metrics';
     import type { ProjectDataEngine } from '../../projects/project-data';
     import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
@@ -145,7 +146,7 @@
                 <div class="risk-list">
                     {#each riskTasks.slice(0, 8) as task (task.id)}
                         <div class="risk-row">
-                            <button class="risk-name" on:click={() => void plugin.app.workspace.getLeaf(false).openFile(task.file)}>{task.name}</button>
+                            <button class="risk-name" on:click={() => void plugin.app.workspace.openLinkText(checklistNoteLink(task) || (task.blockId ? `${task.file.path}#^${task.blockId}` : task.file.path), task.file.path, false)}>{task.name}</button>
                             <span>{riskLabel(task)}</span>
                             <b>{task.endDate || '—'}</b>
                             <button title={t(lang, 'board_start_timer')} aria-label={t(lang, 'board_start_timer')} disabled={!task.habitName} on:click={() => void dataEngine.startTimerForTask(task, scope.sourceType === 'file')}><span use:icon={'play'}></span></button>

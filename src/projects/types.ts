@@ -7,6 +7,13 @@ export interface ProjectScopeDefinition {
     sourceValue: string;
     targetFolder?: string;
     statuses: string;
+    statusDetails?: Record<string, { color?: string; description?: string }>;
+    /** GitHub option IDs remain stable when a status is renamed. */
+    statusOptionIds?: Record<string, string>;
+    /** Local status renames awaiting the corresponding GitHub option update. */
+    pendingStatusRenames?: Record<string, string>;
+    pendingStatusEdits?: string[];
+    pendingStatusDeletes?: string[];
     color?: string;
     templatePath?: string;
     defaultSubtasks?: string;
@@ -45,7 +52,7 @@ export interface ProjectScopeDefinition {
         baseTitle: string;
         baseChecks: Record<string, boolean>;
     }>;
-    githubFields?: { id: string; name: string; type: string; options?: { id: string; name: string; color?: string }[] }[];
+    githubFields?: { id: string; name: string; type: string; options?: { id: string; name: string; color?: string; description?: string }[] }[];
     githubBindings?: Record<string, {
         itemId: string;
         base: { name: string; status: string; archived: boolean };
@@ -74,6 +81,14 @@ export interface ProjectSubtask {
     line: number;
     text: string;
     checked: boolean;
+    sourceText?: string;
+    blockId?: string;
+}
+
+export interface ProjectStage {
+    id: string;
+    title: string;
+    sourceLine: number;
 }
 
 export interface ProjectTask {
@@ -99,6 +114,10 @@ export interface ProjectTask {
     subtasks?: ProjectSubtask[];
     order?: number;
     sourceLine?: number;
+    sourceText?: string;
+    sourceBlock?: string;
+    sourceFrontmatter?: string;
+    sourceContent?: string;
     blockId?: string;
     /** Project item identifier stored beside a task imported from GitHub. */
     githubItemId?: string;
@@ -107,9 +126,11 @@ export interface ProjectTask {
     archived?: boolean;
     /** Numbered headings above a checkbox in a structured Markdown checklist. */
     checklistAncestors?: { id: string; title: string; sourceLine: number }[];
-    /** Full Markdown body is kept in a sibling task note when present. */
+    /** Checklist descriptions live in sections of a shared root note. */
     description?: string;
     notePath?: string;
+    noteAnchor?: string;
+    noteRootId?: string;
     completedAt?: string | null;
 }
 
@@ -121,6 +142,9 @@ export function projectTaskId(filePath: string, sourceLine?: number, blockId?: s
 export type ProjectTab = 'board' | 'table' | 'calendar' | 'dashboard' | 'timeline';
 
 export interface TaskData {
+    /** Internal optimistic concurrency guards, never rendered as task fields. */
+    expectedLine?: string;
+    expectedFrontmatter?: string;
     name: string;
     status: string;
     habitName: string;

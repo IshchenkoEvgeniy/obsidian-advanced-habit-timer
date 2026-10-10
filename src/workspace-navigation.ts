@@ -1,11 +1,13 @@
 import { Notice, setIcon, type ItemView } from 'obsidian';
 import type HabitTimerPlugin from './main';
+import { t } from './i18n';
 
 export const WORKSPACE_SECTIONS = [
     {type:'habit-home-view', label:'Сегодня', en:'Today', icon:'house'},
     {type:'habit-timer-view', label:'Таймер и привычки', en:'Timer & habits', icon:'timer'},
     {type:'habit-standalone-tasks', label:'Задания', en:'Tasks', icon:'list-checks'},
     {type:'habit-projects-view', label:'Проекты', en:'Projects', icon:'columns-3'},
+    {type:'habit-world-design', label:t('ru', 'design_title'), en:t('en', 'design_title'), icon:'network'},
     {type:'habit-library-view', label:'Библиотека', en:'Library', icon:'library'},
     {type:'habit-timer-stats-view', label:'Статистика', en:'Statistics', icon:'chart-no-axes-combined'},
 ] as const;

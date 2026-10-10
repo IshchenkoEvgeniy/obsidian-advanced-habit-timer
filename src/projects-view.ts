@@ -1,11 +1,13 @@
-import { ButtonComponent, ItemView, Modal, Notice, WorkspaceLeaf } from 'obsidian';
+import { ButtonComponent, ItemView, Modal, Notice, WorkspaceLeaf, TFile, parseYaml } from 'obsidian';
 import { mount, unmount } from 'svelte';
+import { get } from 'svelte/store';
 import HabitTimerPlugin from './main';
 import { t } from './i18n';
 import ProjectsApp from './components/projects/ProjectsApp.svelte';
-import type { ProjectScopeDefinition, ProjectScopeStats, ProjectTask, TaskData } from './projects/types';
+import type { ProjectScopeDefinition, ProjectScopeStats, ProjectTask, TaskData, ProjectStage } from './projects/types';
 import { ProjectDataEngine } from './projects/project-data';
 import { taskDisplayTitle } from './projects/engine/task-identity';
+import { readTaskMetadata, replaceTaskMetadata } from './projects/engine/task-metadata';
 import { BoardView } from './projects/views/board-view';
 import { isDone } from './utils/status';
 import { projectTaskToData } from './projects/task-data';
@@ -14,14 +16,9 @@ import { checklistChecks, checklistGroups, checklistMarker, remoteChecklistCheck
 import { nativeChecklistMarker, nativeChecklistNodes } from './projects/native-checklist';
 import { aggregateChecklistStatus } from './projects/checklist-status';
 import { importGitHubChecklistItems } from './projects/github-import';
+import { statusNames, syncProjectStatusOptions } from './projects/status-options';
 import { localStatusForRemote, localValues, planGitHubSync, remoteOptionForLocal, remoteValues, syncPlanSummary, type SyncedField } from './projects/github-sync';
-import {
-    activeScopeId as activeScopeIdStore,
-    columns as columnsStore,
-    scopesWithStats,
-    selectedTasks as selectedTasksStore,
-    tasks as tasksStore
-} from './store/ProjectsStore';
+import { createProjectsStore } from './store/ProjectsStore';
 
 export const VIEW_TYPE_PROJECTS = 'habit-projects-view';
 
@@ -35,6 +32,7 @@ function issueDescription(body: string, marker: string): string {
 export class ProjectsView extends ItemView {
     tasks: ProjectTask[] = [];
     archivedTasks: ProjectTask[] = [];
+    stages: ProjectStage[] = [];
     columns: string[] = ['Backlog', 'To Do', 'In Progress', 'Done'];
     selectedTasks = new Set<string>();
     activeScopeId = '';
@@ -44,6 +42,7 @@ export class ProjectsView extends ItemView {
 
     private component: ReturnType<typeof mount> | null = null;
     private loadTasksTimeout: ReturnType<typeof setTimeout> | null = null;
+    readonly store = createProjectsStore();
     private loadGeneration = 0;
     private githubToken = '';
     private githubSyncing = false;
@@ -129,7 +128,6 @@ export class ProjectsView extends ItemView {
         if (scopeId === this.activeScopeId) return;
         this.activeScopeId = scopeId;
         this.clearSelection();
-        activeScopeIdStore.set(scopeId);
         await this.loadTasks();
     }
 
@@ -140,10 +138,13 @@ export class ProjectsView extends ItemView {
     async loadTasks(): Promise<void> {
         await this.plugin.projectSourceRename;
         const generation = ++this.loadGeneration;
+        this.store.loading.set(true);
+        try {
         const scopes = this.plugin.settings.projectScopes || [];
         if (!scopes.length) {
             this.tasks = [];
             this.archivedTasks = [];
+            this.stages = [];
             this.syncStores([]);
             return;
         }
@@ -157,26 +158,34 @@ export class ProjectsView extends ItemView {
         const configuredColumns = activeScope.statuses.split(',').map(status => status.trim()).filter(Boolean);
         this.columns = configuredColumns.length ? configuredColumns : ['Backlog', 'To Do', 'In Progress', 'Done'];
         const loadedTasks = await this.dataEngine.loadTasks(activeScope);
+        const loadedStages = await this.dataEngine.loadStages(activeScope);
         if (generation !== this.loadGeneration || activeScope.id !== this.activeScopeId) return;
 
         this.tasks = loadedTasks.filter(task => !task.archived);
-        this.archivedTasks = loadedTasks.filter(task => task.archived);
+        const archivedIds = new Set(loadedTasks.filter(task => task.archived).map(task => task.id));
+        this.archivedTasks = loadedTasks.filter(task => task.archived && (!task.parentId || !archivedIds.has(task.parentId)));
+        this.stages = loadedStages;
         for (const status of new Set(this.tasks.map(task => task.status))) {
             if (!this.columns.includes(status)) this.columns.splice(Math.max(0, this.columns.length - 1), 0, status);
         }
         const liveIds = new Set(this.tasks.map(task => task.id));
         this.selectedTasks = new Set([...this.selectedTasks].filter(id => liveIds.has(id)));
+        const previousStats = new Map(get(this.store.snapshot).scopesWithStats.map(scope => [scope.id, scope]));
+        const done = this.tasks.filter(task => task.status === this.columns.at(-1) || isDone(task.status)).length;
+        this.syncStores(scopes.map(scope => scope.id === activeScope.id ? { id: scope.id, name: scope.name,
+            color: scope.color, total: this.tasks.length, done, pct: this.tasks.length ? Math.round(done / this.tasks.length * 100) : 0 } :
+            previousStats.get(scope.id) || { id: scope.id, name: scope.name, color: scope.color, total: 0, done: 0, pct: 0 }));
+        this.store.loading.set(false);
         const stats = await this.calculateScopeStats(scopes, activeScope, this.tasks);
         if (generation !== this.loadGeneration || activeScope.id !== this.activeScopeId) return;
         this.syncStores(stats);
+        } finally { if (generation === this.loadGeneration) this.store.loading.set(false); }
     }
 
     private syncStores(stats: ProjectScopeStats[]): void {
-        tasksStore.set(this.tasks);
-        columnsStore.set(this.columns);
-        selectedTasksStore.set(new Set(this.selectedTasks));
-        activeScopeIdStore.set(this.activeScopeId);
-        scopesWithStats.set(stats);
+        this.store.selectedTasks.set(new Set(this.selectedTasks));
+        this.store.snapshot.set({ tasks: this.tasks, archivedTasks: this.archivedTasks, stages: this.stages,
+            columns: this.columns, activeScopeId: this.activeScopeId, scopesWithStats: stats });
     }
 
     private async calculateScopeStats(
@@ -184,8 +193,8 @@ export class ProjectsView extends ItemView {
         activeScope: ProjectScopeDefinition,
         activeTasks: ProjectTask[]
     ): Promise<ProjectScopeStats[]> {
-        const result = await Promise.all(scopes.map(async scope => {
-            const scopeTasks = scope.id === activeScope.id ? activeTasks : (await this.dataEngine.loadTasks(scope)).filter(task => !task.archived);
+        const result = await Promise.allSettled(scopes.map(async scope => {
+            const scopeTasks = scope.id === activeScope.id ? activeTasks : (await this.dataEngine.readTasksForStats(scope)).filter(task => !task.archived);
             const statuses = scope.statuses.split(',').map(status => status.trim()).filter(Boolean);
             const doneStatus = statuses[statuses.length - 1] || 'Done';
             const done = scopeTasks.filter(task => isDone(task.status) || task.status === doneStatus).length;
@@ -198,7 +207,11 @@ export class ProjectsView extends ItemView {
                 pct: scopeTasks.length ? Math.round(done / scopeTasks.length * 100) : 0
             };
         }));
-        return result;
+        return result.map((item, index) => {
+            if (item.status === 'fulfilled') return item.value;
+            console.error(`Project statistics unavailable: ${scopes[index]!.name}`, item.reason);
+            return { id: scopes[index]!.id, name: scopes[index]!.name, color: scopes[index]!.color, total: 0, done: 0, pct: 0 };
+        });
     }
 
     private selectedList(): ProjectTask[] {
@@ -259,17 +272,17 @@ export class ProjectsView extends ItemView {
                 : `Delete selected tasks (${selected.length})?`
         );
         if (!confirmed) return;
-        for (const task of selected) await this.dataEngine.deleteTask(task, scope.sourceType === 'file');
-        this.clearSelection();
-        await this.loadTasks();
+        try { await this.dataEngine.deleteTasks(selected, scope.sourceType === 'file'); }
+        catch (error) { new Notice(String(error)); }
+        finally { this.clearSelection(); await this.loadTasks(); }
     }
 
     async archiveSelected(): Promise<void> {
         const scope = this.getActiveScope();
         if (!scope) return;
-        for (const task of this.selectedList()) await this.dataEngine.setArchived(task, true, scope.sourceType === 'file');
-        this.clearSelection();
-        await this.loadTasks();
+        try { for (const task of this.selectedList()) await this.dataEngine.setArchived(task, true, scope.sourceType === 'file'); }
+        catch (error) { new Notice(String(error)); }
+        finally { this.clearSelection(); await this.loadTasks(); }
     }
 
     private promptGitHubConnection(scope: ProjectScopeDefinition): Promise<{ url: string; token: string; repositoryUrl: string } | null> {
@@ -360,6 +373,15 @@ export class ProjectsView extends ItemView {
         }
         const scope = this.getActiveScope();
         if (!scope) return;
+        if (scope.sourceType === 'file') {
+            const source = this.app.vault.getAbstractFileByPath(scope.sourceValue);
+            const yaml = source instanceof TFile ? (await this.app.vault.read(source)).match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] : undefined;
+            const frontmatter = yaml ? parseYaml(yaml) as Record<string, unknown> | null : null;
+            if (frontmatter?.design_id) {
+                new Notice(this.plugin.settings.language === 'ru' ? 'Записи мира не синхронизируются с GitHub Projects. Выбери план разработки.' : 'World records do not sync with GitHub Projects. Select the development plan.');
+                return;
+            }
+        }
         if (!['file', 'folder'].includes(scope.sourceType)) {
             new Notice('GitHub sync currently needs a file or folder project source.');
             return;
@@ -378,8 +400,16 @@ export class ProjectsView extends ItemView {
         try {
             new Notice('Loading GitHub Project…');
             const snapshot = await client.loadProject(connection.url);
-            const sourceTasks = await this.dataEngine.loadTasks(scope);
-            if (scope.sourceType === 'file' && checklistGroups(sourceTasks).length) {
+            let sourceTasks = await this.dataEngine.loadTasks(scope);
+            if (await syncProjectStatusOptions(scope, snapshot, client, sourceTasks.map(task => task.status),
+                renames => this.dataEngine.renameStatuses(scope, renames))) {
+                await this.plugin.saveSettings();
+                this.columns = statusNames(scope);
+                this.store.snapshot.update(snapshot => ({ ...snapshot, columns: this.columns }));
+                sourceTasks = await this.dataEngine.loadTasks(scope);
+            }
+            if (scope.sourceType === 'file' && (sourceTasks.some(task => task.parentId) || checklistGroups(sourceTasks).length ||
+                (await this.dataEngine.loadStages(scope)).length || Object.keys(scope.githubNativeItems || {}).length)) {
                 if (connection.repositoryUrl) await this.syncNativeChecklist(scope, connection.url, connection.repositoryUrl,
                     client, snapshot, sourceTasks);
                 else new Notice(this.plugin.settings.language === 'ru'
@@ -675,7 +705,11 @@ export class ProjectsView extends ItemView {
                 }
                 if (pulls.length) {
                     const file = group.tasks[0]!.file;
-                    const lines = (await this.app.vault.read(file)).split('\n');
+                    await this.app.vault.process(file, content => {
+                    const lines = content.split('\n');
+                    for (const pull of pulls) {
+                        if (pull.task.sourceText !== undefined && lines[pull.line] !== pull.task.sourceText) throw new Error('Task changed during GitHub synchronization. Refresh and try again.');
+                    }
                     for (const pull of pulls) {
                         const line = lines[pull.line];
                         const match = line?.match(/^[ \t]*-[ \t]+\[[ xX]\][ \t]*(.*)$/);
@@ -684,7 +718,8 @@ export class ProjectsView extends ItemView {
                         }
                         lines[pull.line] = line.replace(/\[[ xX]\]/, pull.checked ? '[x]' : '[ ]');
                     }
-                    await this.app.vault.modify(file, lines.join('\n'));
+                    return lines.join('\n');
+                    });
                     changed += pulls.length;
                 }
                 const rendered = renderChecklistBody(scope.id, group, checks);
@@ -789,7 +824,7 @@ export class ProjectsView extends ItemView {
             Object.keys(scope.githubNativeItems || {}).length) {
             throw new Error('This project is already linked to another Issues repository.');
         }
-        let nodes = nativeChecklistNodes(tasks);
+        let nodes = nativeChecklistNodes(tasks, await this.dataEngine.loadStages(scope));
         let localDescriptions = await this.dataEngine.checklistDescriptions(scope);
         const remoteById = new Map(snapshot.items.map(item => [item.id, item]));
         const findExisting = (node: typeof nodes[number]): typeof snapshot.items[number] | undefined => {
@@ -849,15 +884,19 @@ export class ProjectsView extends ItemView {
             plannedExisting, normalizedRepository);
         if (imported.count) {
             tasks = await this.dataEngine.loadTasks(scope);
+            const descriptions = new Map<string, string>();
+            const expectedDescriptions = new Map<string, string>();
             for (const item of snapshot.items) {
                 const task = tasks.find(candidate => candidate.githubItemId === item.id);
                 if (!task) continue;
                 const description = issueDescription(item.body, nativeChecklistMarker(scope.id, `leaf:${task.id}`));
-                if (description && !task.notePath) {
-                    await this.dataEngine.saveChecklistNodeDescription(scope, `leaf:${task.id}`, description);
+                if (description && !task.description?.trim()) {
+                    descriptions.set(`leaf:${task.id}`, description);
+                    expectedDescriptions.set(`leaf:${task.id}`, task.description || '');
                 }
             }
-            nodes = nativeChecklistNodes(tasks);
+            if (descriptions.size) await this.dataEngine.saveChecklistDescriptions(scope, descriptions, expectedDescriptions);
+            nodes = nativeChecklistNodes(tasks, await this.dataEngine.loadStages(scope));
             localDescriptions = await this.dataEngine.checklistDescriptions(scope);
             planExisting();
             await this.loadTasks();
@@ -892,6 +931,8 @@ export class ProjectsView extends ItemView {
         const statusField = snapshot.fields.find(field => field.name === 'Status' && field.type === 'SINGLE_SELECT');
         if (!statusField) warnings.push('GitHub Project has no Status field; intermediate task statuses cannot be synchronized.');
         let changed = imported.count;
+        const descriptionPulls = new Map<string, string>();
+        const expectedDescriptions = new Map<string, string>();
         let processed = 0;
         let bindingsUpdated = connectionChanged;
         for (const node of nodes) {
@@ -994,9 +1035,8 @@ export class ProjectsView extends ItemView {
                         warnings.push(`Description changed on both sides: ${node.title}`);
                     } else if (baseDescription !== undefined && remoteDescription !== baseDescription && localDescription === baseDescription ||
                         baseDescription === undefined && !localDescription && remoteDescription) {
-                        await this.dataEngine.saveChecklistNodeDescription(scope, node.key, remoteDescription);
-                        localDescriptions.set(node.key, remoteDescription);
-                        if (node.task) node.task.description = remoteDescription;
+                        descriptionPulls.set(node.key, remoteDescription);
+                        expectedDescriptions.set(node.key, localDescription);
                     } else if (baseDescription !== undefined && localDescription !== baseDescription && remoteDescription === baseDescription ||
                         baseDescription === undefined && localDescription && !remoteDescription) {
                         const body = `${localDescription || `Imported from Obsidian project “${scope.name}”.\n\nSource: ${scope.sourceValue}`}\n\n${marker}`;
@@ -1008,7 +1048,7 @@ export class ProjectsView extends ItemView {
                     }
                 }
                 const synchronizedDescription = issueDescription(item.body, marker);
-                if (synchronizedDescription === (localDescriptions.get(node.key)?.trim() || '') &&
+                if (!descriptionPulls.has(node.key) && synchronizedDescription === (localDescriptions.get(node.key)?.trim() || '') &&
                     scope.githubNativeItems[node.key]!.baseDescription !== synchronizedDescription) {
                     scope.githubNativeItems[node.key]!.baseDescription = synchronizedDescription;
                     bindingsUpdated = true;
@@ -1153,16 +1193,34 @@ export class ProjectsView extends ItemView {
                 await new Promise(resolve => setTimeout(resolve, 120));
             }
         }
+        if (descriptionPulls.size) {
+            await this.dataEngine.saveChecklistDescriptions(scope, descriptionPulls, expectedDescriptions);
+            for (const [key, description] of descriptionPulls) {
+                localDescriptions.set(key, description);
+                scope.githubNativeItems[key]!.baseDescription = description;
+            }
+            bindingsUpdated = true;
+        }
         if (pulls.length) {
             const file = pulls[0]!.task.file;
-            const lines = (await this.app.vault.read(file)).split('\n');
+            await this.app.vault.process(file, content => {
+            const lines = content.split('\n');
+            for (const pull of pulls) {
+                if (pull.task.sourceText !== undefined && lines[pull.line] !== pull.task.sourceText) throw new Error('Task changed during GitHub synchronization. Refresh and try again.');
+            }
             for (const pull of pulls) {
                 const line = lines[pull.line];
                 const match = line?.match(/^[ \t]*-[ \t]+\[[ xX]\][ \t]*(.*)$/);
                 if (!line || !match || taskDisplayTitle(match[1] || '') !== pull.task.name) {
                     throw new Error(`Checklist line moved: ${pull.line + 1}`);
                 }
-                if (pull.checked !== undefined) lines[pull.line] = line.replace(/\[[ xX]\]/, pull.checked ? '[x]' : '[ ]');
+                if (pull.checked !== undefined) {
+                    const metadata = readTaskMetadata(line);
+                    const binding = scope.githubNativeItems?.[`leaf:${pull.task.id}`];
+                    const remote = binding ? remoteById.get(binding.itemId) : undefined;
+                    metadata.completedAt = pull.checked ? remote?.closedAt || new Date().toISOString() : null;
+                    lines[pull.line] = replaceTaskMetadata(line.replace(/\[[ xX]\]/, pull.checked ? '[x]' : '[ ]'), metadata);
+                }
                 if (pull.status !== undefined) {
                     const firstStatus = this.columns[0] || 'Backlog';
                     const cleaned = lines[pull.line]!.replace(/\s*<!-- project-status: [^>]* -->/g, '');
@@ -1174,7 +1232,8 @@ export class ProjectsView extends ItemView {
                         : `${cleaned.trimEnd()}${marker}`;
                 }
             }
-            await this.app.vault.modify(file, lines.join('\n'));
+            return lines.join('\n');
+            });
             changed += pulls.length;
         }
         // GitHub does not propagate sub-issue completion to the parent Issue's Status.
@@ -1229,7 +1288,7 @@ export class ProjectsView extends ItemView {
 
     clearSelection(): void {
         this.selectedTasks.clear();
-        selectedTasksStore.set(new Set());
+        this.store.selectedTasks.set(new Set());
     }
 
     confirmModal(message: string): Promise<boolean> {

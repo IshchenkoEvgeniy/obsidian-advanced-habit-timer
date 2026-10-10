@@ -2,9 +2,13 @@ import { Plugin, WorkspaceLeaf, Notice, moment, TFile, Platform } from 'obsidian
 import { StatsView, VIEW_TYPE_STATS } from './stats-view';
 import { LibraryView, VIEW_TYPE_LIBRARY } from './library-view';
 import { ProjectsView, VIEW_TYPE_PROJECTS } from './projects-view';
+import { DesignService } from './design/service';
+import { DesignView, VIEW_TYPE_DESIGN } from './design/view';
+import { defaultDesignSettings } from './design/schema';
 import { formatDuration } from './utils';
 import { ProjectDataEngine } from './projects/project-data';
 import { projectScopeCacheSignature } from './projects/engine/cache';
+import { isProjectImageFile } from './projects/image-utils';
 import { DEFAULT_SETTINGS } from './types';
 import { defaultDailyGoal, defaultDailyGoalUnit } from './library/daily-goals';
 import type { HabitTimerSettings } from './types';
@@ -14,6 +18,7 @@ import type { MusicPlayer } from './timer/music-player';
 import type { TimerEngine } from './timer/timer-engine';
 import { FloatingTimer } from './timer/floating-timer';
 import { HabitTimerSettingTab } from './settings/settings-tab';
+import type { ProjectScopeDefinition } from './projects/types';
 import { TelegramService } from './services/telegram-service';
 import { calculateHabitStreak } from './services/habit-service';
 import { DailyNoteService } from './services/daily-note-service';
@@ -36,7 +41,9 @@ import { TimerSessionService } from './timer/timer-session-service';
 import type { FinishTimerInput, FinishTimerRequirements } from './integration/dashboard-api-contract';
 
 
+
 export default class HabitTimerPlugin extends Plugin {
+    design: DesignService;
     settings: HabitTimerSettings;
     statusBarItem: HTMLElement;
     telegram: TelegramService;
@@ -46,6 +53,7 @@ export default class HabitTimerPlugin extends Plugin {
     stateManager: StateManager;
     /** Shared engine instance — preserves file-level cache across calls. */
     projectEngine: ProjectDataEngine;
+    private projectSettingsTab?: HabitTimerSettingTab;
     projectSourceRename: Promise<void> = Promise.resolve();
     timerSessions: TimerSessionService;
     persistentMusicPlayer?: MusicPlayer;
@@ -72,9 +80,14 @@ export default class HabitTimerPlugin extends Plugin {
         this.companion = new CloudflareCompanionService(this);
         this.stateManager = new StateManager(this.app, this);
         this.projectEngine = new ProjectDataEngine(this.app, this);
+        this.design = new DesignService(this);
         this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
             let changed = false;
             let renamedChecklist = false;
+            const renamedImage = file instanceof TFile && isProjectImageFile(file);
+            const renamedNote = file instanceof TFile && (Boolean(this.app.metadataCache.getFileCache(file)?.frontmatter?.project_root_note) ||
+                (this.settings.projectScopes || []).some(scope => scope.sourceType === 'file' &&
+                    oldPath.startsWith(`${scope.sourceValue.replace(/\.md$/i, '')}.tasks/`)));
             for (const scope of this.settings.projectScopes || []) {
                 if (scope.sourceType === 'file' && scope.sourceValue === oldPath) {
                     scope.sourceValue = file.path;
@@ -93,14 +106,16 @@ export default class HabitTimerPlugin extends Plugin {
                     changed = true;
                 }
             }
-            if (!changed) return;
+            if (!changed && !renamedNote && !renamedImage) return;
             const previous = this.projectSourceRename;
             this.projectSourceRename = previous.catch(() => undefined).then(async () => {
                 try {
                     if (renamedChecklist && file instanceof TFile) await this.projectEngine.renameChecklistSource(oldPath, file);
+                    else if (renamedNote && file instanceof TFile) await this.projectEngine.renameChecklistNote(oldPath, file);
+                    if (renamedImage && file instanceof TFile) await this.projectEngine.renameImageReferences(oldPath, file);
                 } catch (error) {
                     new Notice(`Could not move project task state: ${String(error)}`, 10000);
-                } finally { await this.saveSettings(); }
+                } finally { if (changed) await this.saveSettings(); }
             });
         }));
         this.timerSessions = new TimerSessionService(this);
@@ -112,12 +127,25 @@ export default class HabitTimerPlugin extends Plugin {
         this.floatingTimer = new FloatingTimer(this);
         this.floatingTimer.mount();
 
-        this.addSettingTab(new HabitTimerSettingTab(this.app, this));
+        this.projectSettingsTab = new HabitTimerSettingTab(this.app, this);
+        this.addSettingTab(this.projectSettingsTab);
 
         this.registerView(VIEW_TYPE_TIMER, (leaf) => withWorkspaceNavigation(new TimerView(leaf, this), this));
         this.registerView(VIEW_TYPE_STATS, (leaf) => withWorkspaceNavigation(new StatsView(leaf, this), this));
         this.registerView(VIEW_TYPE_LIBRARY, (leaf) => withWorkspaceNavigation(new LibraryView(leaf, this), this));
         this.registerView(VIEW_TYPE_PROJECTS, (leaf) => withWorkspaceNavigation(new ProjectsView(leaf, this), this));
+        this.registerView(VIEW_TYPE_DESIGN, leaf => withWorkspaceNavigation(new DesignView(leaf, this), this));
+        this.addRibbonIcon('network', this.design.tr('design_title'), () => { void this.activateView(VIEW_TYPE_DESIGN); });
+        for (const [id, key, action] of [
+            ['open-world-design', 'design_open', 'hub'],
+            ['new-design-entity', 'design_new_entity', 'entity'],
+            ['new-design-board', 'design_new_board', 'board'],
+            ['open-design-board', 'design_open_board', 'pick'],
+        ] as const) this.addCommand({ id, name: this.design.tr(key), callback: async () => {
+            await this.activateView(VIEW_TYPE_DESIGN);
+            const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_DESIGN)[0]?.view;
+            if (view instanceof DesignView) { if (action === 'entity') view.newEntity(); else if (action === 'board') view.newBoard(); else if (action === 'pick') view.pickBoard(); else view.showHub(); }
+        } });
         this.registerView(VIEW_TYPE_HOME, (leaf) => withWorkspaceNavigation(new HomeView(leaf, this), this));
         this.registerView(VIEW_TYPE_TASKS, leaf => withWorkspaceNavigation(new TasksView(leaf, this), this));
         this.addCommand({id:'open-standalone-tasks',name:'Задания',callback:()=>this.activateView(VIEW_TYPE_TASKS)});
@@ -309,6 +337,7 @@ export default class HabitTimerPlugin extends Plugin {
     async loadSettings() {
         const loadedData = (await this.loadData()) as Partial<HabitTimerSettings> | null;
         this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+        this.settings.design = loadedData?.design || defaultDesignSettings(this.settings.language);
         const habitIdsChanged = ensureHabitPropertyIds(this.settings.properties);
         this.settings.libraryPropertyAliases = normalizeAliases(this.settings.libraryPropertyAliases);
         if (!this.settings.projectScopes) {
@@ -346,6 +375,10 @@ export default class HabitTimerPlugin extends Plugin {
         
         await migrateLegacySettings(this, loadedData);
         if (habitIdsChanged) await this.saveData(this.settings);
+    }
+
+    openProjectStatusEditor(scope: ProjectScopeDefinition): void {
+        void this.projectSettingsTab?.openStatusEditor(scope, this.settings.language);
     }
 
     async saveSettings() {
@@ -626,6 +659,7 @@ export default class HabitTimerPlugin extends Plugin {
     }
 
     onunload() {
+        this.design?.dispose();
         this.floatingTimer?.destroy();
         this.persistentTimerEngine?.suspend();
         this.persistentMusicPlayer?.destroy();

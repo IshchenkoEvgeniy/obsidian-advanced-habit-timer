@@ -1,5 +1,6 @@
 import { App, Modal, Platform, PluginSettingTab, Setting, Notice, moment, requestUrl } from 'obsidian';
 import { t } from '../i18n';
+import { DesignSchemaModal } from '../design/modals';
 import type HabitTimerPlugin from '../main';
 import SettingsSvelte from '../components/Settings.svelte';
 import { mount } from 'svelte';
@@ -7,6 +8,8 @@ import { DEFAULT_LIBRARY_PROPERTY_ALIASES } from '../types';
 import type { HabitProperty, LibraryPropertyField, WeekdayKey } from '../types';
 import type { Language } from '../i18n';
 import type { ProjectScopeDefinition } from '../projects/types';
+import { projectTaskToData } from '../projects/task-data';
+import { statusKey, statusMatches, statusNames } from '../projects/status-options';
 
 declare const require: (moduleName: string) => {
     promises: { readFile(path: string, encoding: 'utf8'): Promise<string> };
@@ -45,6 +48,9 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                     this.display();
                 }));
+
+        new Setting(c).setName(t(lang, 'design_title')).setDesc(this.plugin.settings.design.root)
+            .addButton(button => button.setButtonText(t(lang, 'design_schema')).onClick(() => new DesignSchemaModal(this.plugin.design).open()));
 
         new Setting(c).setName(t(lang, 'theme_label')).setDesc(t(lang, 'theme_desc'))
             .addDropdown(d => {
@@ -174,14 +180,12 @@ export class HabitTimerSettingTab extends PluginSettingTab {
                 };
             }
 
-            // Statuses Row
-            const stRow = scopeCard.createDiv({ attr: { style: 'display: flex; gap: 10px; align-items: center;' } });
-            stRow.createSpan({ text: t(lang, 'scope_columns_label'), attr: { style: 'font-size: 0.9em; color: var(--text-muted); min-width: 80px;' } });
-            const stInput = stRow.createEl('input', { type: 'text', value: scope.statuses, placeholder: 'Backlog, To Do, In Progress, Done', attr: { style: 'flex-grow: 1;' } });
-            stInput.onchange = async (e) => {
-                scope.statuses = (e.target as HTMLInputElement).value;
-                await this.plugin.saveSettings();
-            };
+            const stRow = scopeCard.createDiv({ cls: 'project-status-settings' });
+            stRow.createSpan({ text: t(lang, 'scope_columns_label') });
+            const statusList = stRow.createDiv({ cls: 'project-status-chips' });
+            for (const name of statusNames(scope)) statusList.createSpan({ text: name });
+            stRow.createEl('button', { text: lang === 'ru' ? 'Настроить статусы' : 'Manage statuses' })
+                .onclick = () => { void this.openStatusEditor(scope, lang); };
 
             // Color & Template Row
             const ctRow = scopeCard.createDiv({ attr: { style: 'display: flex; gap: 15px; align-items: center;' } });
@@ -739,6 +743,152 @@ export class HabitTimerSettingTab extends PluginSettingTab {
         });
     }
 
+    async openStatusEditor(scope: ProjectScopeDefinition, lang: Language): Promise<void> {
+        type Draft = { original?: string; name: string; color: string; description: string; detailsChanged?: boolean };
+        const ru = lang === 'ru';
+        const colors = ['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE'];
+        const colorHex: Record<string, string> = { GRAY: '#9198a1', BLUE: '#4493f8', GREEN: '#3fb950',
+            YELLOW: '#d29922', ORANGE: '#db6d28', RED: '#f85149', PINK: '#db61a2', PURPLE: '#a371f7' };
+        const existingField = scope.githubFields?.find(field => field.name.toLocaleLowerCase() === 'status');
+        const names = statusNames(scope);
+        try {
+            for (const task of await this.plugin.projectEngine.loadTasks(scope)) {
+                if (task.status && !names.some(name => statusKey(name) === statusKey(task.status))) {
+                    names.splice(Math.max(0, names.length - 1), 0, task.status);
+                }
+            }
+        } catch (error) { new Notice(String(error)); return; }
+        const rows: Draft[] = names.map(name => {
+            const option = existingField?.options?.find(value => statusKey(value.name) === statusKey(name) ||
+                (statusKey(name) === 'backlog' && statusKey(value.name) === 'todo'));
+            return { original: name, name, color: scope.statusDetails?.[name]?.color || option?.color || 'GRAY',
+                description: scope.statusDetails?.[name]?.description || option?.description || '' };
+        });
+        const modal = new Modal(this.app);
+        modal.setTitle(ru ? 'Статусы проекта' : 'Project statuses');
+        modal.contentEl.addClass('project-status-editor');
+        modal.contentEl.createEl('p', { text: ru
+            ? 'Первый статус назначается новым задачам, последний означает выполнение. При GitHub Sync новые статусы передаются в GitHub, а варианты из GitHub добавляются сюда.'
+            : 'The first status is the default for new items; the last means completed. GitHub Sync exchanges new status options in both directions.' });
+        const list = modal.contentEl.createDiv({ cls: 'project-status-editor-list' });
+        const errorEl = modal.contentEl.createDiv({ cls: 'project-status-editor-error' });
+        const render = (): void => {
+            list.empty();
+            rows.forEach((row, index) => {
+                const line = list.createDiv({ cls: 'project-status-editor-row' });
+                const name = line.createEl('input', { type: 'text', value: row.name,
+                    attr: { 'aria-label': ru ? 'Название статуса' : 'Status name', placeholder: ru ? 'Название' : 'Name' } });
+                name.oninput = () => { row.name = name.value; errorEl.setText(''); };
+                const color = line.createEl('select', { attr: { 'aria-label': ru ? 'Цвет статуса' : 'Status color' } });
+                for (const value of colors) color.createEl('option', { value, text: value });
+                color.value = row.color;
+                color.style.borderLeft = `4px solid ${colorHex[row.color] || colorHex.GRAY}`;
+                color.onchange = () => {
+                    row.color = color.value;
+                    row.detailsChanged = true;
+                    color.style.borderLeft = `4px solid ${colorHex[row.color] || colorHex.GRAY}`;
+                };
+                const description = line.createEl('input', { type: 'text', value: row.description,
+                    attr: { 'aria-label': ru ? 'Описание статуса' : 'Status description', placeholder: ru ? 'Описание' : 'Description' } });
+                description.oninput = () => { row.description = description.value; row.detailsChanged = true; };
+                const up = line.createEl('button', { text: '↑', attr: { 'aria-label': ru ? 'Выше' : 'Move up' } });
+                up.disabled = index <= 1 || index === rows.length - 1;
+                up.onclick = () => { [rows[index - 1], rows[index]] = [rows[index]!, rows[index - 1]!]; render(); };
+                const down = line.createEl('button', { text: '↓', attr: { 'aria-label': ru ? 'Ниже' : 'Move down' } });
+                down.disabled = index === 0 || index >= rows.length - 2;
+                down.onclick = () => { [rows[index], rows[index + 1]] = [rows[index + 1]!, rows[index]!]; render(); };
+                const remove = line.createEl('button', { text: '×', attr: { 'aria-label': ru ? 'Удалить статус' : 'Remove status' } });
+                remove.disabled = index === 0 || index === rows.length - 1 || rows.length <= 2;
+                remove.onclick = () => { rows.splice(index, 1); render(); };
+            });
+        };
+        render();
+        const actions = modal.contentEl.createDiv({ cls: 'project-status-editor-actions' });
+        actions.createEl('button', { text: ru ? '+ Добавить статус' : '+ Add status' }).onclick = () => {
+            rows.splice(rows.length - 1, 0, { name: '', color: 'GRAY', description: '' });
+            render();
+            list.querySelector<HTMLInputElement>('.project-status-editor-row:nth-last-child(2) input')?.focus();
+        };
+        actions.createEl('button', { text: ru ? 'Отмена' : 'Cancel' }).onclick = () => modal.close();
+        const save = actions.createEl('button', { text: ru ? 'Сохранить' : 'Save', cls: 'mod-cta' });
+        save.onclick = async () => {
+            const names = rows.map(row => row.name.trim());
+            if (names.some(name => !name || name.includes(',') || name.includes('-->')) ||
+                new Set(names.map(statusKey)).size !== names.length) {
+                errorEl.setText(ru ? 'Нужны уникальные названия без запятых и пустых строк.' : 'Use unique, nonempty names without commas.');
+                return;
+            }
+            save.disabled = true;
+            errorEl.setText('');
+            try {
+                for (const row of rows) {
+                    if (!row.original || row.original === row.name.trim()) continue;
+                    const linked = existingField?.options?.find(option => statusMatches(row.original!, option.name));
+                    if (linked && rows.some(other => other !== row && other.original &&
+                        statusMatches(other.original, linked.name))) {
+                        throw new Error(ru
+                            ? `«${row.original}» и другой статус используют один вариант GitHub «${linked.name}». Измените их сначала в GitHub.`
+                            : `“${row.original}” shares GitHub option “${linked.name}” with another status. Rename it in GitHub first.`);
+                    }
+                }
+                const tasks = await this.plugin.projectEngine.loadTasks(scope);
+                const oldNames = statusNames(scope);
+                const kept = new Set(rows.map(row => row.original).filter(Boolean));
+                for (const oldName of oldNames) {
+                    if (!kept.has(oldName) && tasks.some(task => task.status === oldName)) {
+                        throw new Error(ru ? `Статус «${oldName}» используется задачами.` : `Status “${oldName}” is used by items.`);
+                    }
+                }
+                const localRenames = Object.fromEntries(rows.filter(row => row.original && row.original !== row.name.trim())
+                    .map(row => [row.original!, row.name.trim()]));
+                if (Object.keys(localRenames).length) await this.plugin.projectEngine.renameStatuses(scope, localRenames);
+                const details: NonNullable<ProjectScopeDefinition['statusDetails']> = {};
+                const edits = new Set(scope.pendingStatusEdits || []);
+                const renames = { ...(scope.pendingStatusRenames || {}) };
+                const deletions = new Set(scope.pendingStatusDeletes || []);
+                for (const row of rows) {
+                    const name = row.name.trim();
+                    details[name] = { color: row.color, description: row.description.trim() };
+                    if (row.original && row.original !== name) {
+                        const remoteOption = existingField?.options?.find(value => statusKey(value.name) === statusKey(row.original!) ||
+                            (statusKey(row.original!) === 'backlog' && statusKey(value.name) === 'todo'));
+                        const oldRemoteName = remoteOption?.name || row.original;
+                        for (const [old, target] of Object.entries(renames)) if (target === row.original) renames[old] = name;
+                        if (!Object.values(renames).includes(name)) renames[oldRemoteName] = name;
+                    }
+                    if (row.detailsChanged) edits.add(name);
+                    if (row.original && row.original !== name) {
+                        if (edits.has(row.original)) edits.add(name);
+                        edits.delete(row.original);
+                    }
+                    deletions.delete(row.original || name);
+                }
+                for (const oldName of oldNames) {
+                    if (kept.has(oldName)) continue;
+                    const remoteOption = existingField?.options?.find(value => statusKey(value.name) === statusKey(oldName));
+                    if (remoteOption && !rows.some(row => statusMatches(row.name.trim(), remoteOption.name))) {
+                        deletions.add(remoteOption.name);
+                    }
+                }
+                scope.statuses = names.join(', ');
+                scope.statusDetails = details;
+                scope.pendingStatusRenames = renames;
+                scope.pendingStatusEdits = [...edits];
+                scope.pendingStatusDeletes = [...deletions];
+                await this.plugin.saveSettings();
+                for (const leaf of this.app.workspace.getLeavesOfType('habit-projects-view')) {
+                    await (leaf.view as unknown as { loadTasks?: () => Promise<void> }).loadTasks?.();
+                }
+                modal.close();
+                this.display();
+            } catch (error) {
+                errorEl.setText(error instanceof Error ? error.message : String(error));
+                save.disabled = false;
+            }
+        };
+        modal.open();
+    }
+
     private openChecklistImportModal(scope: ProjectScopeDefinition, lang: Language): void {
         const modal = new Modal(this.app);
         modal.setTitle(lang === 'ru' ? 'Импортировать чеклист как проект' : 'Import checklist as project');
@@ -822,6 +972,7 @@ export class HabitTimerSettingTab extends PluginSettingTab {
             sourceType: 'file',
             sourceValue: target,
             statuses: scope.statuses,
+            statusDetails: scope.statusDetails ? { ...scope.statusDetails } : undefined,
             color: scope.color,
             githubProjectUrl: scope.githubProjectUrl
         };

@@ -1,8 +1,9 @@
 import { App, TFile } from 'obsidian';
 import type { GitHubItem } from './github-client';
 import { localStatusForRemote } from './github-sync';
-import { newTaskBlockId } from './engine/task-identity';
-import { GITHUB_IMPORT_SECTION, type NativeChecklistNode } from './native-checklist';
+import { newTaskBlockId, checklistNodeId, stripChecklistNodeId } from './engine/task-identity';
+import { PROJECT_ROOT_HEADING, type NativeChecklistNode } from './native-checklist';
+import { markdownContentLines, markdownIndent } from './engine/markdown-lines';
 import type { ProjectScopeDefinition, ProjectTask } from './types';
 
 interface ImportResult {
@@ -18,8 +19,13 @@ export async function importGitHubChecklistItems(app: App, scope: ProjectScopeDe
     if (!(source instanceof TFile)) throw new Error(`Checklist source is missing: ${scope.sourceValue}`);
     const content = await app.vault.read(source);
     const lines = content.split('\n');
+    const contentLines = markdownContentLines(lines);
+    for (const task of tasks) {
+        if (task.sourceText !== undefined && lines[task.sourceLine ?? -1] !== task.sourceText) throw new Error('Checklist changed before GitHub import. Refresh and try again.');
+    }
     const warnings: string[] = [];
-    const alreadyImported = new Set([...content.matchAll(/<!-- github-project-item: ([^>]+) -->/g)]
+    const structuralContent = lines.filter((_, row) => contentLines[row]).join('\n');
+    const alreadyImported = new Set([...structuralContent.matchAll(/<!-- github-project-item: ([^>]+) -->/g)]
         .map(match => match[1]!.trim()));
     const knownItemIds = new Set([
         ...[...matched.values()].map(item => item.id),
@@ -57,7 +63,7 @@ export async function importGitHubChecklistItems(app: App, scope: ProjectScopeDe
     for (const node of nodes) {
         kinds.set(node.key, node.kind);
         if (node.kind === 'stage') positions.set(node.key,
-            lines.findIndex(line => line.trim() === `## ${node.title}`));
+            lines.findIndex((line, row) => contentLines[row] && (checklistNodeId(line) === node.key || stripChecklistNodeId(line).trim() === `## ${node.title}`)));
         else if (node.kind === 'leaf' && node.task?.sourceLine !== undefined) positions.set(node.key, node.task.sourceLine);
     }
     for (const task of tasks) {
@@ -74,6 +80,7 @@ export async function importGitHubChecklistItems(app: App, scope: ProjectScopeDe
     }
     const insert = (index: number, line: string, key: string): void => {
         lines.splice(index, 0, line);
+        contentLines.splice(index, 0, true);
         for (const [existingKey, position] of positions) {
             if (position >= index) positions.set(existingKey, position + 1);
         }
@@ -98,13 +105,14 @@ export async function importGitHubChecklistItems(app: App, scope: ProjectScopeDe
         if (parentPosition !== undefined && parentPosition >= 0) {
             index = parentPosition + 1;
             if (kinds.get(parentKey!) !== 'stage') {
-                indent = (lines[parentPosition]?.match(/^[ \t]*/)?.[0].length || 0) + 2;
+                indent = markdownIndent(lines[parentPosition] || '') + 2;
             }
         } else {
             if (item.parentIssueId) warnings.push(`Parent Issue is outside this checklist: ${item.title}`);
-            let heading = lines.findIndex(line => line.trim() === `## ${GITHUB_IMPORT_SECTION}`);
+            let heading = lines.findIndex((line, row) => contentLines[row] && line.trim() === `# ${PROJECT_ROOT_HEADING}`);
             if (heading < 0) {
-                lines.push('', `## ${GITHUB_IMPORT_SECTION}`, '');
+                lines.push('', `# ${PROJECT_ROOT_HEADING}`, '');
+                contentLines.push(true, true, true);
                 heading = lines.length - 2;
             }
             index = heading + 1;
@@ -122,6 +130,9 @@ export async function importGitHubChecklistItems(app: App, scope: ProjectScopeDe
         if (item.contentType === 'Issue') issueToKey.set(item.contentId, key);
         count++;
     }
-    if (count) await app.vault.modify(source, lines.join('\n'));
+    if (count) await app.vault.process(source, current => {
+        if (current !== content) throw new Error('Checklist changed during GitHub import. Refresh and try again.');
+        return lines.join('\n');
+    });
     return { count, warnings };
 }

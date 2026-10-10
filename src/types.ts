@@ -1,4 +1,6 @@
 import type { Language } from './i18n';
+import type { DesignSettings } from './design/types';
+import { defaultDesignSettings } from './design/schema';
 import type { ProjectScopeDefinition } from './projects/types';
 export type { ProjectScopeDefinition };
 
@@ -83,6 +85,7 @@ export type HabitExplicitState = 'completed' | 'partial' | 'skipped' | 'excused'
 export type HabitDayState = HabitExplicitState | 'pending' | 'missed';
 
 export interface HabitTimerSettings {
+    design: DesignSettings;
     properties: HabitProperty[];
     pomodoroDuration: number;
     dailyNotesFolder: string;
@@ -163,6 +166,7 @@ export interface HabitTimerSettings {
 }
 
 export const DEFAULT_SETTINGS: HabitTimerSettings = {
+    design: defaultDesignSettings('ru'),
     properties: [
         { id: 'habit-programming', name: 'Habit-Programming', goalMinutes: 120, globalGoalHours: 1000 },
         { id: 'habit-english', name: 'Habit-English', goalMinutes: 60, globalGoalHours: 300 }

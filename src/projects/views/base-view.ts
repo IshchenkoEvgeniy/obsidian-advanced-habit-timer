@@ -1,10 +1,13 @@
 import { App, Modal, ButtonComponent } from 'obsidian';
 import HabitTimerPlugin from '../../main';
 import { ProjectDataEngine } from '../project-data';
-import type { ProjectScopeDefinition, ProjectTask } from '../types';
+import type { Writable } from 'svelte/store';
+import type { ProjectScopeDefinition, ProjectTask, ProjectStage, ProjectTab } from '../types';
 
 export interface ViewContext {
+    projectTab?: Writable<ProjectTab>;
     allTasks: ProjectTask[];
+    stages?: ProjectStage[];
     archivedTasks?: ProjectTask[];
     filteredTasks: ProjectTask[];
     selectedTasks: Set<string>;

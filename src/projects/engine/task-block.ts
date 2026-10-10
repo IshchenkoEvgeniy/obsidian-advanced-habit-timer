@@ -1,4 +1,13 @@
+import { markdownContentLines, markdownIndent } from './markdown-lines';
+
+export function isStructuredChecklist(lines: string[]): boolean {
+    const contentLines = markdownContentLines(lines);
+    return lines.some((line, row) => contentLines[row] && (/^##[ \t]+Этап\s+/.test(line) || /^#[ \t]+Задачи проекта\s*$/.test(line) ||
+        /^[ \t]+-[ \t]+\[[ xX]\]/.test(line)));
+}
+
 export function findTaskBlockEnd(lines: string[], taskLineIdx: number, parentIndent: number): number {
+    parentIndent = lines[taskLineIdx] !== undefined ? markdownIndent(lines[taskLineIdx]) : parentIndent;
     let index = taskLineIdx + 1;
     while (index < lines.length) {
         const line = lines[index];
@@ -6,8 +15,9 @@ export function findTaskBlockEnd(lines: string[], taskLineIdx: number, parentInd
             index++;
             continue;
         }
-        const listMatch = line.match(/^([ \t]*)-/);
-        if (listMatch && (listMatch[1]?.length || 0) > parentIndent) {
+        // Paragraphs, quotes and fenced code belong to the list item too.
+        const indentation = markdownIndent(line);
+        if (indentation > parentIndent) {
             index++;
             continue;
         }

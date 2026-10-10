@@ -1,18 +1,21 @@
-import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
+import type { ProjectScopeDefinition, ProjectTask, ProjectStage } from '../../projects/types';
 import type { SubIssueProgress } from './table-hierarchy';
 import { aggregateChecklistStatus } from '../../projects/checklist-status';
 
 export type StageGrouping = 'none' | 'local' | 'status' | `github:${string}`;
-export type TableRowGroup = { key: string; label: string; rows: ProjectTask[]; estimate: number; spent: number };
-export type StageCollection = { key: string; label: string; stages: number; done: number; first: boolean; status?: string };
+export type TableRowGroup = { key: string; label: string; rows: ProjectTask[]; estimate: number; spent: number; stageId?: string };
+export type StageCollection = { key: string; label: string; stages: number; items: number; done: number; first: boolean; status?: string };
 export type GroupedStage = TableRowGroup & { collection?: StageCollection };
 
 export function tableStageKey(group: TableRowGroup): string {
-    return group.rows[0]?.sectionKey || `stage:${group.key}`;
+    return group.stageId || group.rows[0]?.sectionKey || `stage:${group.key}`;
 }
 
-export function collectTableStages(tasks: ProjectTask[]): TableRowGroup[] {
+export function collectTableStages(tasks: ProjectTask[], definitions: ProjectStage[] = []): TableRowGroup[] {
     const stages = new Map<string, TableRowGroup>();
+    for (const stage of definitions) stages.set(stage.title, {
+        key: stage.title, label: stage.title, stageId: stage.id, rows: [], estimate: 0, spent: 0
+    });
     for (const task of tasks) {
         if (!task.section) continue;
         let stage = stages.get(task.section);
@@ -49,7 +52,8 @@ export function groupTableStages(groups: TableRowGroup[], scope: ProjectScopeDef
     if (mode === 'none') return groups;
     const collections = new Map<string, TableRowGroup[]>();
     for (const stage of groups) {
-        const value = mode === 'status' ? statuses.get(stage.key) || aggregateChecklistStatus(stage.rows, columns) : groupingValue(stage, scope, mode);
+        const value = mode === 'status' ? stage.key.startsWith('__root:') ? stage.key.slice('__root:'.length) :
+            statuses.get(stage.key) || aggregateChecklistStatus(stage.rows, columns) : groupingValue(stage, scope, mode);
         const members = collections.get(value) || [];
         members.push(stage);
         collections.set(value, members);
@@ -58,13 +62,18 @@ export function groupTableStages(groups: TableRowGroup[], scope: ProjectScopeDef
     const entries = [...collections].sort(([a], [b]) => mode === 'status'
         ? columns.indexOf(a) - columns.indexOf(b) : Number(!a) - Number(!b));
     return entries.flatMap(([value, stages]) => {
-        const done = stages.filter(stage => {
+        const actualStages = stages.filter(stage => stage.key.startsWith('Этап '));
+        const done = actualStages.filter(stage => {
             const summary = progress.get(stage.key);
             return Boolean(summary && summary.total > 0 && summary.done === summary.total);
         }).length;
         return stages.map((stage, index) => ({ ...stage, collection: {
             key: JSON.stringify([mode, value]), label: value || emptyLabel,
-            stages: stages.length, done, first: index === 0, ...(mode === 'status' ? { status: value } : {})
+            stages: actualStages.length, items: stages.filter(member => !member.key.startsWith('Этап ')).reduce((sum, member) => {
+                const ids = new Set(member.rows.map(task => task.id));
+                return sum + member.rows.filter(task => !task.parentId || !ids.has(task.parentId)).length;
+            }, 0),
+            done, first: index === 0, ...(mode === 'status' ? { status: value } : {})
         } }));
     });
 }

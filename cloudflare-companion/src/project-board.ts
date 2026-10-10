@@ -6,7 +6,9 @@ export interface BoardTask {
  key: string; scopeId: string; scopeName: string; path: string; id?: string; blockId?: string;
  name: string; status: string; priority: string; startDate: string; endDate: string;
  habitName: string; timeSpentSec: number; timeEstimatedSec: number;
- subtasks: Array<{text: string; checked: boolean}>;
+ subtreeSignature?: string;
+ stateSignature?: string;
+ subtasks: Array<{id?: string; text: string; checked: boolean}>;
 }
 export interface BoardScope { id: string; name: string; statuses: string; sourceType?: string; }
 interface DocumentRow { data_json: string; revision: number; pending: number; deleted: number; }
@@ -66,12 +68,13 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
  const raw:Record<string,unknown>=body.task||{};
  const scope=scopes.find(s=>s.id===(previous?.scopeId||raw.scopeId));
  if(!scope)return json({error:'scope_not_found'},400);
- const clean=(v:unknown,max=250)=>typeof v==='string'?v.trim().slice(0,max):'';
+ const clean=(v:unknown,_max=250)=>typeof v==='string'?v.trim():'';
  const task:BoardTask= action==='delete'?previous!:{
   ...(previous||{}),key:previous?.key||`cloud:${requestId}`,scopeId:scope.id,scopeName:scope.name,path:previous?.path||'',
   name:clean(raw.name),status:clean(raw.status,100),priority:clean(raw.priority,20),startDate:clean(raw.startDate,10),endDate:clean(raw.endDate,10),
   habitName:clean(raw.habitName,150),timeSpentSec:previous?.timeSpentSec||0,timeEstimatedSec:Number(raw.timeEstimatedSec)||0,
-  subtasks:Array.isArray(raw.subtasks)?raw.subtasks.slice(0,100).map((s:{text?:unknown;checked?:unknown})=>({text:clean(s.text),checked:s.checked===true})):[]
+  subtasks:Array.isArray(raw.subtasks)?raw.subtasks.map((s:{id?:unknown;text?:unknown;checked?:unknown})=>({
+   id:clean(s.id,1024)||undefined,text:clean(s.text,2000),checked:s.checked===true})):[]
  };
  const columns=scope.statuses.split(',').map(s=>s.trim()).filter(Boolean);
  if(action==='create'){
@@ -79,10 +82,11 @@ export async function boardApi(request:Request,env:Env,profile:string,config:Com
   if((names.results||[]).some(r=>{const t:BoardTask=JSON.parse(r.data_json) as BoardTask;return t.scopeId===scope.id&&t.name.toLocaleLowerCase()===task.name.toLocaleLowerCase();}))return json({error:'task_duplicate'},409);
  }
  const validDate=(date:string)=>!date||(/^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date);
- if(!task.name||/[\r\n\\/:*?"<>|]/.test(task.name)||!columns.includes(task.status)||!validDate(task.startDate)||!validDate(task.endDate)
- ||(task.startDate&&task.endDate&&task.startDate>task.endDate)||task.subtasks.some(s=>!s.text||/[\r\n]/.test(s.text))
+ if(!task.name||task.name.length>250||task.status.length>100||task.priority.length>20||task.habitName.length>150||/[\r\n\\/:*?"<>|]/.test(task.name)||!columns.includes(task.status)||!validDate(task.startDate)||!validDate(task.endDate)
+ ||(task.startDate&&task.endDate&&task.startDate>task.endDate)||task.subtasks.length>1000||task.subtasks.some(s=>!s.text||s.text.length>2000||(s.id?.length||0)>1024||/[\r\n]/.test(s.text))
  ||task.timeEstimatedSec<0||task.timeEstimatedSec>31536000)return json({error:'invalid_task'},400);
  if(task.habitName&&!parseHabits(config).some(h=>h.name===task.habitName&&(h.type||'timer')==='timer'))return json({error:'task_habit_required'},400);
+ if(new Set(task.subtasks.filter(s=>s.id).map(s=>s.id)).size!==task.subtasks.filter(s=>s.id).length)return json({error:'invalid_task'},400);
  const {date}=zonedParts(Date.now(),config.timezone);
  const payload={action,task,previous};
  // The optimistic revision and event insertion are committed together in one D1 batch.

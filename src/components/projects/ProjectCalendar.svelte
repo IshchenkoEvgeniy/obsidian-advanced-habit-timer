@@ -4,9 +4,11 @@
     import type HabitTimerPlugin from '../../main';
     import { t } from '../../i18n';
     import { TaskEditorModal } from '../../projects/modals/task-editor';
+    import ProjectTaskCreateForm from './ProjectTaskCreateForm.svelte';
+    import { showProjectImageMenu } from '../../projects/project-image-actions';
     import type { ProjectDataEngine } from '../../projects/project-data';
     import { projectTaskToData } from '../../projects/task-data';
-    import type { ProjectScopeDefinition, ProjectTask } from '../../projects/types';
+    import type { ProjectScopeDefinition, ProjectTask, TaskData } from '../../projects/types';
     import type { ViewContext } from '../../projects/views/base-view';
 
     export let plugin: HabitTimerPlugin;
@@ -22,6 +24,9 @@
     };
     let cursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     let dragOver = '';
+    let createDefaults: Partial<TaskData> | null = null;
+    let createScopeId = '';
+    let createBusy = false;
 
     $: lang = plugin.settings.language;
     $: days = buildDays(cursor);
@@ -51,7 +56,7 @@
     }
     function tasksForDay(key: string): ProjectTask[] {
         return ctx.filteredTasks.filter(task => {
-            if (!task.startDate) return false;
+            if (!task.startDate) return task.endDate?.slice(0, 10) === key;
             const start = task.startDate.slice(0, 10);
             const end = task.endDate?.slice(0, 10);
             return end ? key >= start && key <= end : key === start;
@@ -64,14 +69,13 @@
         return task.status === ctx.columns[ctx.columns.length - 1];
     }
     function createTask(key: string): void {
-        new TaskEditorModal(plugin.app, plugin, { startDate: key }, ctx.columns, false, async data => {
-            await dataEngine.createTask(scope, data);
-            ctx.onRefresh();
-        }).open();
+        if (createBusy) return;
+        createDefaults = { startDate: key };
+        createScopeId = scope.id;
     }
-    function editTask(task: ProjectTask, event: MouseEvent): void {
-        event.stopPropagation();
-        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+    function editTask(task: ProjectTask, event?: MouseEvent): void {
+        event?.stopPropagation();
+        if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
             if (ctx.selectedTasks.has(task.id)) ctx.selectedTasks.delete(task.id); else ctx.selectedTasks.add(task.id);
             ctx.onSelectionChange?.();
             return;
@@ -80,7 +84,12 @@
         new TaskEditorModal(plugin.app, plugin, initial, ctx.columns, true, async data => {
             await dataEngine.saveEditedTask(scope, task, data, ctx.columns);
             ctx.onRefresh();
-        }).open();
+        }, [], task.notePath || task.file.path).open();
+    }
+    function openImageMenu(event: MouseEvent, task: ProjectTask): void {
+        showProjectImageMenu(event, { app: plugin.app, dataEngine, scope, task, lang,
+            ownerDocument: (event.currentTarget as HTMLElement).ownerDocument, onRefresh: ctx.onRefresh },
+            () => editTask(task));
     }
     async function dropTask(event: DragEvent, key: string): Promise<void> {
         event.preventDefault();
@@ -97,7 +106,8 @@
             nextEnd.setDate(nextEnd.getDate() + duration);
             endDate = dateKey(nextEnd);
         }
-        const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), { startDate: key, endDate });
+        const changes = !task.startDate && task.endDate ? { endDate: key } : { startDate: key, endDate };
+        const data = projectTaskToData(task, seconds => plugin.formatTime(seconds), changes);
         await dataEngine.saveTask(task.file, data, scope.sourceType === 'file', task.name, ctx.columns, task.blockId, task.sourceLine);
         ctx.onRefresh();
     }
@@ -109,6 +119,14 @@
         return `hsl(${Math.abs(hash) % 360}, 55%, 42%)`;
     }
 </script>
+
+<div class="calendar-view">
+{#if createDefaults && createScopeId === scope.id}
+    {#key createDefaults}
+        <ProjectTaskCreateForm {plugin} {dataEngine} {scope} {ctx}
+            initialData={createDefaults} bind:busy={createBusy} onClose={() => createDefaults = null} />
+    {/key}
+{/if}
 
 {#if ctx.filteredTasks.length}
     <div class="calendar-toolbar">
@@ -141,6 +159,7 @@
                                 draggable="true"
                                 on:dragstart={(event) => event.dataTransfer?.setData('text/plain', task.id)}
                                 on:dblclick|stopPropagation={() => {}}
+                                on:contextmenu={(event) => openImageMenu(event, task)}
                                 on:click={(event) => editTask(task, event)}>
                                 <span>{task.name}</span>
                                 {#if task.priority === 'high'}<i class="pdot" title={t(lang, 'priority_high')} aria-label={t(lang, 'priority_high')}></i>{/if}
@@ -159,8 +178,10 @@
         <button class="empty-action" on:click={() => createTask(dateKey(new Date()))}><span use:icon={'plus'}></span>{t(lang, 'add_new_task')}</button>
     </div>
 {/if}
+</div>
 
 <style>
+    .calendar-view { display:flex; flex-direction:column; height:100%; min-height:0; gap:8px; }
     .calendar-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
     .navigation { display:flex; align-items:center; gap:8px; }
     .navigation h2 { min-width:190px; margin:0; font-size:1.05rem; text-align:center; text-transform:capitalize; }
@@ -168,7 +189,7 @@
     .navigation span { display:block; width:16px; height:16px; }
     .today-btn { border-radius:var(--radius-m); }
 
-    .calendar-scroll { height:calc(100% - 42px); min-height:480px; overflow:auto; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); }
+    .calendar-scroll { flex:1; min-height:240px; overflow:auto; border:1px solid var(--background-modifier-border); border-radius:var(--radius-l); background:var(--background-primary); box-shadow:var(--shadow-s); }
     .weekdays,.calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(110px,1fr)); min-width:770px; }
     .weekdays { position:sticky; top:0; z-index:3; background:var(--background-secondary); }
     .weekdays div { padding:6px; color:var(--text-muted); font-size:.75rem; font-weight:600; text-align:center; }

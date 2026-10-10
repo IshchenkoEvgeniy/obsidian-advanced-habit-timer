@@ -1,6 +1,9 @@
-import { App, Modal, Setting, Notice, SuggestModal, Platform, getAllTags, moment } from 'obsidian';
-import HabitTimerPlugin from '../../main';
+import { App, Modal, Setting, Notice, SuggestModal, Platform, getAllTags, moment, type ButtonComponent, type TFile, type TextComponent } from 'obsidian';
+import type HabitTimerPlugin from '../../main';
 import { t } from '../../i18n';
+import { appendProjectImages, isProjectImageFilename } from '../image-utils';
+import { chooseProjectImageFiles, ProjectImageSuggestModal } from './project-image-picker';
+import { ProjectImageDraft } from '../image-draft';
 import type { TaskData } from '../types';
 
 export class HabitSuggestModal extends SuggestModal<string> {
@@ -31,16 +34,27 @@ export class TaskEditorModal extends Modal {
     data: TaskData;
     isEdit: boolean;
     columns: string[];
+    stages: string[];
+    sourcePath: string;
     onSubmit: (data: TaskData) => void | Promise<void>;
+    private closed = false;
+    private submitting = false;
+    private submission: Promise<void> | undefined;
+    private imageDraft: ProjectImageDraft | undefined;
+    private closeImagePicker: (() => void) | undefined;
 
-    constructor(app: App, plugin: HabitTimerPlugin, initialData: Partial<TaskData>, columns: string[], isEdit: boolean, onSubmit: (data: TaskData) => void | Promise<void>) {
+    constructor(app: App, plugin: HabitTimerPlugin, initialData: Partial<TaskData>, columns: string[], isEdit: boolean, onSubmit: (data: TaskData) => void | Promise<void>, stages: string[] = [], sourcePath = '') {
         super(app);
         this.plugin = plugin;
         this.columns = columns;
+        this.stages = stages;
+        this.sourcePath = sourcePath;
         this.isEdit = isEdit;
         this.onSubmit = onSubmit;
         
         this.data = {
+            expectedLine: initialData.expectedLine,
+            expectedFrontmatter: initialData.expectedFrontmatter,
             name: initialData.name || "",
             status: initialData.status || columns[0] || "Backlog",
             habitName: initialData.habitName || "",
@@ -80,6 +94,8 @@ export class TaskEditorModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
+        this.closed = false;
+        this.imageDraft = new ProjectImageDraft(this.app, this.sourcePath);
         
         if (Platform.isMobile) {
             const modalEl = contentEl.parentElement;
@@ -98,9 +114,11 @@ export class TaskEditorModal extends Modal {
             }
         });
 
+        let descriptionInput: HTMLTextAreaElement | null = null;
         new Setting(contentEl).setName(lang === 'ru' ? 'Описание' : 'Description')
             .setDesc(lang === 'ru' ? 'Для задачи чеклиста описание хранится в отдельной заметке рядом с ним.' : 'For checklist tasks, the description is stored in a sibling note.')
             .addTextArea(text => {
+                descriptionInput = text.inputEl;
                 text.setValue(this.data.description || '').onChange(value => this.data.description = value);
                 text.inputEl.rows = 6;
                 text.inputEl.setCssStyles({ minWidth: '320px' });
@@ -121,6 +139,14 @@ export class TaskEditorModal extends Modal {
             });
             cb.setValue(this.data.status).onChange(v => this.data.status = v);
         });
+
+        if (!this.isEdit && this.stages.length) {
+            new Setting(contentEl).setName(lang === 'ru' ? 'Этап' : 'Stage').addDropdown(cb => {
+                cb.addOption('', lang === 'ru' ? 'Без этапа' : 'No stage');
+                this.stages.forEach(stage => { cb.addOption(stage, stage); });
+                cb.setValue(this.data.section || '').onChange(value => this.data.section = value || undefined);
+            });
+        }
 
         new Setting(contentEl).setName(lang === 'ru' ? 'Приоритет' : 'Priority').addDropdown(cb => {
             cb.addOption('', lang === 'ru' ? 'Без приоритета' : 'No priority');
@@ -207,9 +233,67 @@ export class TaskEditorModal extends Modal {
             };
         });
 
-        new Setting(contentEl).setName(t(lang, 'task_cover_label') || "Cover Image URL/Link").addText(text => {
+        let coverInput: TextComponent | null = null;
+        const coverSetting = new Setting(contentEl).setName(t(lang, 'task_cover_label') || "Cover Image URL/Link");
+        coverSetting.addText(text => {
+            coverInput = text;
             text.setValue(this.data.cover).onChange(v => this.data.cover = v);
         });
+        coverSetting.addButton(button => button
+            .setButtonText(lang === 'ru' ? 'Из хранилища' : 'From vault')
+            .onClick(() => new ProjectImageSuggestModal(this.app, lang, file => {
+                if (this.closed || this.submitting) return;
+                this.data.cover = file.path;
+                coverInput?.setValue(file.path);
+            }).open()));
+        const attachImage = (file: TFile): void => {
+            if (this.closed || this.submitting) return;
+            const description = this.data.description || '';
+            this.data.description = appendProjectImages(this.app, description, [file], this.sourcePath);
+            if (descriptionInput) descriptionInput.value = this.data.description;
+            if (!this.data.cover) {
+                this.data.cover = file.path;
+                coverInput?.setValue(file.path);
+            }
+        };
+        const attachmentsSetting = new Setting(contentEl)
+            .setName(lang === 'ru' ? 'Изображения' : 'Image attachments')
+            .setDesc(lang === 'ru' ? 'Вложения сохраняются в хранилище и отображаются на карточке.' : 'Images stay in the vault and appear on the card.');
+        attachmentsSetting.addButton(button => button
+            .setButtonText(lang === 'ru' ? 'Из хранилища' : 'From vault')
+            .onClick(() => new ProjectImageSuggestModal(this.app, lang, attachImage).open()));
+        let uploadingImage = false;
+        let saveButton: ButtonComponent | null = null;
+        const uploadImage = async (imageFile: File): Promise<void> => {
+            const supportedExtension = isProjectImageFilename(imageFile.name);
+            if (!supportedExtension) {
+                new Notice(lang === 'ru' ? 'Выберите файл изображения.' : 'Choose an image file.');
+                return;
+            }
+            if (uploadingImage || this.closed || this.submitting) return;
+            uploadingImage = true;
+            saveButton?.setDisabled(true);
+            try {
+                const attachment = await this.imageDraft?.upload(imageFile);
+                if (attachment) attachImage(attachment);
+            } catch (error) {
+                if (!this.closed) new Notice(String(error));
+            } finally {
+                uploadingImage = false;
+                if (!this.closed && !this.submitting) saveButton?.setDisabled(false);
+            }
+        };
+        attachmentsSetting.addButton(button => button
+            .setButtonText(lang === 'ru' ? 'С устройства' : 'From device')
+            .onClick(() => {
+                if (uploadingImage || this.closed || this.submitting) return;
+                this.closeImagePicker?.();
+                try {
+                    this.closeImagePicker = chooseProjectImageFiles(this.app, lang, files => {
+                        if (files[0]) void uploadImage(files[0]);
+                    }, { ownerDocument: contentEl.ownerDocument, multiple: false });
+                } catch (error) { new Notice(String(error)); }
+            }));
 
         const colorSetting = new Setting(contentEl).setName(t(lang, 'task_color_label') || "Color (CSS color)").addText(text => {
             text.setValue(this.data.color).onChange(v => {
@@ -238,17 +322,39 @@ export class TaskEditorModal extends Modal {
             };
         });
         
-        new Setting(contentEl).addButton(btn => btn.setButtonText(this.isEdit ? t(lang, 'save') || "Save" : (t(lang, 'create_btn') || "Create")).setCta().onClick(() => {
-            if (!this.data.name.trim()) {
-                new Notice((t(lang, 'task_name_label') || "Task Name") + " is required!");
-                return;
-            }
-            void this.onSubmit(this.data);
-            this.close();
-        }));
+        new Setting(contentEl).addButton(btn => {
+            saveButton = btn;
+            btn.setButtonText(this.isEdit ? t(lang, 'save') || "Save" : (t(lang, 'create_btn') || "Create")).setCta().onClick(async () => {
+                if (this.closed || this.submitting || uploadingImage) return;
+                if (!this.data.name.trim()) {
+                    new Notice((t(lang, 'task_name_label') || "Task Name") + " is required!");
+                    return;
+                }
+                this.submitting = true;
+                contentEl.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input, button, select, textarea')
+                    .forEach(control => control.disabled = true);
+                try {
+                    this.submission = Promise.resolve(this.onSubmit({ ...this.data }));
+                    await this.submission;
+                    this.imageDraft?.commit();
+                    this.close();
+                } catch (error) {
+                    new Notice(String(error));
+                } finally {
+                    this.submitting = false;
+                    this.submission = undefined;
+                    if (!this.closed) contentEl.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input, button, select, textarea')
+                        .forEach(control => control.disabled = false);
+                }
+            });
+        });
     }
 
     onClose() {
+        this.closed = true;
+        this.closeImagePicker?.();
+        this.closeImagePicker = undefined;
+        void this.imageDraft?.cancel(this.submission);
         this.contentEl.empty();
     }
 }
